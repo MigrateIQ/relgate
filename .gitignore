@@ -55,3 +55,6 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Internal planning docs — not for public repo
+docs/RELGATE_PLAN.md
