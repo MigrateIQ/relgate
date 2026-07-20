@@ -1,0 +1,96 @@
+name: 'RelGate'
+description: 'Know your .NET release is ready before you tag it. Flags unused usings, build warnings, and nullable issues in changed files.'
+author: 'MigrateIQ'
+branding:
+  icon: 'check-circle'
+  color: 'blue'
+
+inputs:
+  dotnet-version:
+    description: '.NET SDK version to use'
+    required: false
+    default: '8.0.x'
+  changed-files-only:
+    description: 'Only check files changed in the PR (true/false)'
+    required: false
+    default: 'true'
+  fail-on-issues:
+    description: 'Fail the check if blocking issues are found (true/false)'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+
+    - name: Restore
+      shell: bash
+      run: dotnet restore
+
+    - name: Get changed .cs files
+      if: inputs.changed-files-only == 'true'
+      id: changed
+      uses: tj-actions/changed-files@v45
+      with:
+        files: '**/*.cs'
+
+    - name: Check unused usings (blocking)
+      id: usings
+      shell: bash
+      run: |
+        if [ "${{ inputs.changed-files-only }}" = "true" ] && [ -n "${{ steps.changed.outputs.all_changed_files }}" ]; then
+          dotnet format analyzers --verify-no-changes --severity warn --diagnostics IDE0005 \
+            --include ${{ steps.changed.outputs.all_changed_files }} > usings-output.txt 2>&1 || true
+        else
+          dotnet format analyzers --verify-no-changes --severity warn --diagnostics IDE0005 > usings-output.txt 2>&1 || true
+        fi
+        count=$(grep -c "IDE0005" usings-output.txt || true)
+        echo "count=$count" >> "$GITHUB_OUTPUT"
+
+    - name: Check nullable warnings (advisory)
+      id: nullable
+      shell: bash
+      run: |
+        dotnet build --no-restore /p:TreatWarningsAsErrors=false > build-output.txt 2>&1 || true
+        count=$(grep -cE "CS8[0-9]{3}" build-output.txt || true)
+        echo "count=$count" >> "$GITHUB_OUTPUT"
+
+    - name: Post consolidated PR comment
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const usingsCount = ${{ steps.usings.outputs.count || 0 }};
+          const nullableCount = ${{ steps.nullable.outputs.count || 0 }};
+          const totalBlocking = usingsCount;
+          const status = totalBlocking > 0 ? '❌ Blocking issues found' : '✅ Clean';
+
+          const body = [
+            `### RelGate report — ${status}`,
+            '',
+            '| Category | Severity | Count |',
+            '|---|---|---|',
+            `| Unused usings | 🔴 Blocking | ${usingsCount} |`,
+            `| Nullable warnings | 🟡 Advisory | ${nullableCount} |`,
+            '',
+            usingsCount > 0 ? '_Run `dotnet format analyzers --diagnostics IDE0005` locally to fix._' : ''
+          ].join('\n');
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body
+          });
+
+    - name: Fail if blocking issues found
+      if: inputs.fail-on-issues == 'true'
+      shell: bash
+      run: |
+        if [ "${{ steps.usings.outputs.count }}" != "0" ] && [ -n "${{ steps.usings.outputs.count }}" ]; then
+          echo "::error::RelGate found unused using directives. See PR comment for details."
+          exit 1
+        fi

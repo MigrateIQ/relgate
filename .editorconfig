@@ -1,0 +1,11 @@
+root = true
+
+[*.cs]
+# Unused using directives
+dotnet_diagnostic.IDE0005.severity = warning
+
+# Nullable reference warnings surfaced as build warnings (not errors) in Phase 1
+dotnet_diagnostic.CS8600.severity = warning
+dotnet_diagnostic.CS8602.severity = warning
+dotnet_diagnostic.CS8603.severity = warning
+dotnet_diagnostic.CS8604.severity = warning
