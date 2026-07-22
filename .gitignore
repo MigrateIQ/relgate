@@ -56,5 +56,6 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 
-# Internal planning docs — not for public repo
-docs/RELGATE_PLAN.md
+# Python (mock license server used in self-test)
+__pycache__/
+*.pyc
