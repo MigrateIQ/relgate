@@ -1,5 +1,8 @@
+---
 name: 'RelGate'
-description: 'Know your .NET release is ready before you tag it. Flags unused usings, build warnings, and nullable issues in changed files.'
+description: >-
+  Know your .NET release is ready before you tag it. Flags unused usings,
+  build warnings, and nullable issues in changed files.
 author: 'MigrateIQ'
 branding:
   icon: 'check-circle'
@@ -10,6 +13,12 @@ inputs:
     description: '.NET SDK version to use'
     required: false
     default: '8.0.x'
+  project-path:
+    description: >-
+      Path to a .sln or .csproj to restore/build/format. Leave blank to
+      auto-detect a single project or solution at the repo root.
+    required: false
+    default: ''
   changed-files-only:
     description: 'Only check files changed in the PR (true/false)'
     required: false
@@ -18,6 +27,27 @@ inputs:
     description: 'Fail the check if blocking issues are found (true/false)'
     required: false
     default: 'true'
+  hide-pro-hint:
+    description: >-
+      Internal use only — set by pro/action.yml when it nests this action,
+      so licensed Pro users don't see a hint to buy what they already
+      have. Not part of the documented public input surface.
+    required: false
+    default: 'false'
+
+outputs:
+  usings-count:
+    description: 'Number of unused-using violations found'
+    value: ${{ steps.usings.outputs.count }}
+  nullable-count:
+    description: 'Number of nullable-warning occurrences found'
+    value: ${{ steps.nullable.outputs.count }}
+  build-failed:
+    description: 'true if the build failed to compile'
+    value: ${{ steps.nullable.outputs.build_failed }}
+  tool-error:
+    description: 'true if the unused-usings tool itself failed to run'
+    value: ${{ steps.usings.outputs.tool_error }}
 
 runs:
   using: composite
@@ -28,7 +58,9 @@ runs:
 
     - name: Restore
       shell: bash
-      run: dotnet restore
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+      run: bash "${{ github.action_path }}/scripts/restore.sh"
 
     - name: Get changed .cs files
       if: inputs.changed-files-only == 'true'
@@ -40,23 +72,20 @@ runs:
     - name: Check unused usings (blocking)
       id: usings
       shell: bash
-      run: |
-        if [ "${{ inputs.changed-files-only }}" = "true" ] && [ -n "${{ steps.changed.outputs.all_changed_files }}" ]; then
-          dotnet format analyzers --verify-no-changes --severity warn --diagnostics IDE0005 \
-            --include ${{ steps.changed.outputs.all_changed_files }} > usings-output.txt 2>&1 || true
-        else
-          dotnet format analyzers --verify-no-changes --severity warn --diagnostics IDE0005 > usings-output.txt 2>&1 || true
-        fi
-        count=$(grep -c "IDE0005" usings-output.txt || true)
-        echo "count=$count" >> "$GITHUB_OUTPUT"
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        CHANGED_ONLY: ${{ inputs.changed-files-only }}
+        CHANGED_FILES: ${{ steps.changed.outputs.all_changed_files }}
+      run: bash "${{ github.action_path }}/scripts/check-usings.sh"
 
-    - name: Check nullable warnings (advisory)
+    - name: Check nullable warnings (advisory) and build health
       id: nullable
       shell: bash
-      run: |
-        dotnet build --no-restore /p:TreatWarningsAsErrors=false > build-output.txt 2>&1 || true
-        count=$(grep -cE "CS8[0-9]{3}" build-output.txt || true)
-        echo "count=$count" >> "$GITHUB_OUTPUT"
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        CHANGED_ONLY: ${{ inputs.changed-files-only }}
+        CHANGED_FILES: ${{ steps.changed.outputs.all_changed_files }}
+      run: bash "${{ github.action_path }}/scripts/check-nullable-and-build.sh"
 
     - name: Post consolidated PR comment
       if: github.event_name == 'pull_request'
@@ -65,32 +94,86 @@ runs:
         script: |
           const usingsCount = ${{ steps.usings.outputs.count || 0 }};
           const nullableCount = ${{ steps.nullable.outputs.count || 0 }};
-          const totalBlocking = usingsCount;
-          const status = totalBlocking > 0 ? '❌ Blocking issues found' : '✅ Clean';
+          const toolError =
+            '${{ steps.usings.outputs.tool_error }}' === 'true';
+          const buildFailed =
+            '${{ steps.nullable.outputs.build_failed }}' === 'true';
 
+          const totalBlocking =
+            usingsCount + (toolError ? 1 : 0) + (buildFailed ? 1 : 0);
+          const status = totalBlocking > 0
+            ? '❌ Blocking issues found'
+            : '✅ Clean';
+
+          const rows = [
+            `| Unused usings | 🔴 Blocking | ${usingsCount} |`,
+            `| Nullable warnings | 🟡 Advisory | ${nullableCount} |`,
+          ];
+          if (buildFailed) {
+            rows.push('| Build | 🔴 Blocking | Failed to compile |');
+          }
+          if (toolError) {
+            rows.push('| Lint tool | 🔴 Blocking | Failed to run |');
+          }
+
+          const hideProHint = '${{ inputs.hide-pro-hint }}' === 'true';
+          const marker = '<!-- relgate-report -->';
+          const year = new Date().getFullYear();
           const body = [
-            `### RelGate report — ${status}`,
+            marker,
+            `### RelGate report – ${status}`,
             '',
             '| Category | Severity | Count |',
             '|---|---|---|',
-            `| Unused usings | 🔴 Blocking | ${usingsCount} |`,
-            `| Nullable warnings | 🟡 Advisory | ${nullableCount} |`,
+            ...rows,
             '',
-            usingsCount > 0 ? '_Run `dotnet format analyzers --diagnostics IDE0005` locally to fix._' : ''
-          ].join('\n');
+            usingsCount > 0
+              ? '_Run `dotnet format style --diagnostics IDE0005` ' +
+                'locally to fix._'
+              : '',
+            '',
+            '---',
+            hideProHint
+              ? null
+              : '_RelGate Pro adds a vulnerability readiness score and ' +
+                'a secret-leak scan — see the ' +
+                '[Pro tier](https://github.com/MigrateIQ/relgate#pro-tier)._',
+            hideProHint ? null : '',
+            '<!-- relgate-copyright -->',
+            `_© ${year} MigrateIQ · ` +
+              '[RelGate](https://github.com/MigrateIQ/relgate)_'
+          ].filter((line) => line !== null).join('\n');
 
-          await github.rest.issues.createComment({
+          const { data: comments } = await github.rest.issues.listComments({
             owner: context.repo.owner,
             repo: context.repo.repo,
             issue_number: context.issue.number,
-            body
           });
+          const existing = comments.find(
+            (c) => c.body && c.body.includes(marker)
+          );
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+          }
 
     - name: Fail if blocking issues found
       if: inputs.fail-on-issues == 'true'
       shell: bash
-      run: |
-        if [ "${{ steps.usings.outputs.count }}" != "0" ] && [ -n "${{ steps.usings.outputs.count }}" ]; then
-          echo "::error::RelGate found unused using directives. See PR comment for details."
-          exit 1
-        fi
+      env:
+        USINGS_COUNT: ${{ steps.usings.outputs.count }}
+        TOOL_ERROR: ${{ steps.usings.outputs.tool_error }}
+        BUILD_FAILED: ${{ steps.nullable.outputs.build_failed }}
+      run: bash "${{ github.action_path }}/scripts/fail-gate.sh"

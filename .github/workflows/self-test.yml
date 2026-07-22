@@ -1,0 +1,139 @@
+---
+name: Self-test
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Note: these fixtures are exercised via `push`/`workflow_dispatch`, never
+# `pull_request`, so RelGate's own PR-comment step (gated on
+# `github.event_name == 'pull_request'`) never runs here. That path isn't
+# covered by this self-test.
+#
+# Assertion logic lives under .github/scripts/self-test/ rather than
+# inline here, mirroring the same pro/scripts/ split used in pro/action.yml
+# — steps stay declarative, scripts stay independently readable/testable.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: pip install yamllint
+      - run: yamllint action.yml
+
+  free-tier-fixtures:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: test-fixtures/clean/Clean.csproj
+            assert: assert-clean-fixture.sh
+          - fixture: test-fixtures/dirty/Dirty.csproj
+            assert: assert-dirty-fixture.sh
+          - fixture: test-fixtures/broken/Broken.csproj
+            assert: assert-broken-build.sh
+    steps:
+      - uses: actions/checkout@v4
+      - id: relgate
+        uses: ./
+        with:
+          project-path: ${{ matrix.fixture }}
+          changed-files-only: 'false'
+          fail-on-issues: 'false'
+      - name: Assert
+        shell: bash
+        env:
+          USINGS: ${{ steps.relgate.outputs.usings-count }}
+          NULLABLE: ${{ steps.relgate.outputs.nullable-count }}
+          BUILD_FAILED: ${{ steps.relgate.outputs.build-failed }}
+        run: bash .github/scripts/self-test/${{ matrix.assert }}
+
+  fail-on-issues-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run RelGate expecting it to fail
+        id: relgate
+        continue-on-error: true
+        uses: ./
+        with:
+          project-path: test-fixtures/dirty/Dirty.csproj
+          changed-files-only: 'false'
+          fail-on-issues: 'true'
+      - name: Assert the step actually failed
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.relgate.outcome }}
+          MESSAGE: expected RelGate to fail on the dirty fixture
+        run: bash .github/scripts/self-test/assert-step-failed.sh
+
+  pro-licensed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start mock Lemon Squeezy server
+        run: bash .github/scripts/self-test/start-mock-license-server.sh
+      - id: relgate
+        uses: ./pro
+        with:
+          project-path: test-fixtures/vulnerable/Vulnerable.csproj
+          changed-files-only: 'false'
+          fail-on-issues: 'false'
+          license-key: valid-pro
+          license-api-url: http://127.0.0.1:8085
+      - name: Assert Pro checks actually ran
+        shell: bash
+        env:
+          LICENSED: ${{ steps.relgate.outputs.licensed }}
+          SCORE: ${{ steps.relgate.outputs.vuln-score }}
+          FAILED: ${{ steps.relgate.outputs.vuln-readiness-failed }}
+          SECRETS: ${{ steps.relgate.outputs.secrets-found }}
+        run: bash .github/scripts/self-test/assert-pro-licensed.sh
+
+  pro-rejected-license:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        license-key: [nonsense, valid-wrong-product]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start mock Lemon Squeezy server
+        run: bash .github/scripts/self-test/start-mock-license-server.sh
+      - id: relgate
+        uses: ./pro
+        with:
+          project-path: test-fixtures/clean/Clean.csproj
+          fail-on-issues: 'true'
+          license-key: ${{ matrix.license-key }}
+          license-api-url: http://127.0.0.1:8085
+      - name: Assert unlicensed and job did not fail
+        shell: bash
+        env:
+          LICENSED: ${{ steps.relgate.outputs.licensed }}
+        run: bash .github/scripts/self-test/assert-unlicensed.sh
+
+  pro-api-unreachable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: relgate
+        uses: ./pro
+        with:
+          project-path: test-fixtures/clean/Clean.csproj
+          fail-on-issues: 'true'
+          license-key: valid-pro
+          license-api-url: http://127.0.0.1:8085
+      - name: Assert fail-open when the license API is unreachable
+        shell: bash
+        env:
+          LICENSED: ${{ steps.relgate.outputs.licensed }}
+          OUTCOME: ${{ steps.relgate.outcome }}
+        run: bash .github/scripts/self-test/assert-fail-open.sh

@@ -1,0 +1,213 @@
+---
+name: 'RelGate Pro'
+description: >-
+  RelGate's free checks, plus a locally-computed vulnerability readiness
+  score and a secret-leakage scan. Requires a Lemon Squeezy license key.
+author: 'MigrateIQ'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  dotnet-version:
+    description: '.NET SDK version to use'
+    required: false
+    default: '8.0.x'
+  project-path:
+    description: >-
+      Path to a .sln or .csproj to restore/build/format. Leave blank to
+      auto-detect a single project or solution at the repo root.
+    required: false
+    default: ''
+  changed-files-only:
+    description: 'Only check files changed in the PR (true/false)'
+    required: false
+    default: 'true'
+  fail-on-issues:
+    description: 'Fail the check if blocking issues are found (true/false)'
+    required: false
+    default: 'true'
+  license-key:
+    description: 'RelGate Pro license key (Lemon Squeezy)'
+    required: true
+  vuln-readiness-threshold:
+    description: >-
+      Minimum vulnerability readiness score (0-100) required to pass. This
+      is a plain configurable default, not derived from any external data.
+    required: false
+    default: '80'
+  vuln-benchmark:
+    description: >-
+      Reference readiness score shown alongside your own for context. A
+      static, user-editable default — not a live cross-customer comparison.
+    required: false
+    default: '75'
+  license-api-url:
+    description: >-
+      Base URL for license validation. Defaults to the real Lemon Squeezy
+      API — override only to point at a mock server in tests.
+    required: false
+    default: 'https://api.lemonsqueezy.com'
+
+outputs:
+  licensed:
+    description: 'true if the license key validated successfully'
+    value: ${{ steps.license.outputs.licensed }}
+  vuln-score:
+    description: 'Vulnerability readiness score (0-100), empty if unlicensed'
+    value: ${{ steps.vuln.outputs.score }}
+  vuln-readiness-failed:
+    description: 'true if the vulnerability score is below the threshold'
+    value: ${{ steps.vuln.outputs.failed }}
+  secrets-found:
+    description: 'Number of potential leaked secrets found'
+    value: ${{ steps.secrets.outputs.count }}
+
+runs:
+  using: composite
+  steps:
+    # Pinned to @main until a v1 tag exists — switch this to @v1 once the
+    # free action has a real release. fail-on-issues is always forced to
+    # 'false' here so the nested action never aborts this job early; the
+    # final "Fail if blocking issues found" step below owns the single,
+    # unified pass/fail decision for both tiers.
+    - name: Run RelGate free checks
+      id: free
+      uses: MigrateIQ/relgate@main
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+        project-path: ${{ inputs.project-path }}
+        changed-files-only: ${{ inputs.changed-files-only }}
+        fail-on-issues: 'false'
+        hide-pro-hint: 'true'
+
+    - name: Validate license
+      id: license
+      shell: bash
+      env:
+        LICENSE_API_URL: ${{ inputs.license-api-url }}
+        LICENSE_KEY: ${{ inputs.license-key }}
+      run: bash "${{ github.action_path }}/scripts/validate-license.sh"
+
+    - name: Get changed files for secret scan
+      if: |
+        steps.license.outputs.licensed == 'true' &&
+        inputs.changed-files-only == 'true'
+      id: secret-changed
+      uses: tj-actions/changed-files@v45
+      with:
+        files: '**/*'
+
+    - name: Vulnerability scan
+      id: vuln
+      if: steps.license.outputs.licensed == 'true'
+      shell: bash
+      env:
+        PROJECT_PATH: ${{ inputs.project-path }}
+        VULN_THRESHOLD: ${{ inputs.vuln-readiness-threshold }}
+      run: bash "${{ github.action_path }}/scripts/vuln-scan.sh"
+
+    - name: Secret scan
+      id: secrets
+      if: steps.license.outputs.licensed == 'true'
+      shell: bash
+      env:
+        CHANGED_ONLY: ${{ inputs.changed-files-only }}
+        CHANGED_FILES: ${{ steps.secret-changed.outputs.all_changed_files }}
+      run: bash "${{ github.action_path }}/scripts/secret-scan.sh"
+
+    - name: Generate report
+      id: report
+      shell: bash
+      env:
+        LICENSED: ${{ steps.license.outputs.licensed }}
+        USINGS_COUNT: ${{ steps.free.outputs.usings-count }}
+        NULLABLE_COUNT: ${{ steps.free.outputs.nullable-count }}
+        BUILD_FAILED: ${{ steps.free.outputs.build-failed }}
+        VULN_SCORE: ${{ steps.vuln.outputs.score }}
+        VULN_FAILED: ${{ steps.vuln.outputs.failed }}
+        VULN_BENCHMARK: ${{ inputs.vuln-benchmark }}
+        VULN_THRESHOLD: ${{ inputs.vuln-readiness-threshold }}
+        SECRETS_COUNT: ${{ steps.secrets.outputs.count }}
+      run: bash "${{ github.action_path }}/scripts/generate-report.sh"
+
+    - name: Upload report
+      uses: actions/upload-artifact@v4
+      with:
+        name: relgate-report
+        path: ${{ steps.report.outputs.path }}
+
+    - name: Extend PR comment with Pro results
+      if: |
+        steps.license.outputs.licensed == 'true' &&
+        github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const marker = '<!-- relgate-report -->';
+          const copyrightMarker = '<!-- relgate-copyright -->';
+          const score = '${{ steps.vuln.outputs.score }}';
+          const failed = '${{ steps.vuln.outputs.failed }}' === 'true';
+          const benchmark = '${{ inputs.vuln-benchmark }}';
+          const threshold = '${{ inputs.vuln-readiness-threshold }}';
+          const secretsCount = '${{ steps.secrets.outputs.count }}';
+
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          const existing = comments.find(
+            (c) => c.body && c.body.includes(marker)
+          );
+          if (!existing || existing.body.includes('### RelGate Pro')) {
+            return;
+          }
+
+          // Drop the free tier's copyright line (and its marker) so the
+          // combined comment ends with exactly one, at the true bottom,
+          // rather than one in the middle and a duplicate at the end.
+          const lines = existing.body.split('\n');
+          const copyrightIndex = lines.indexOf(copyrightMarker);
+          const baseLines = copyrightIndex === -1
+            ? lines
+            : lines.slice(0, copyrightIndex);
+
+          const year = new Date().getFullYear();
+          const proSection = [
+            '',
+            '### RelGate Pro',
+            '',
+            '| Category | Value |',
+            '|---|---|',
+            `| Vulnerability readiness | ${score}/100 ` +
+              `(threshold ${threshold}, benchmark ${benchmark}) ` +
+              `${failed ? '❌' : '✅'} |`,
+            `| Secrets found | ${secretsCount} |`,
+            '',
+            copyrightMarker,
+            `_© ${year} MigrateIQ · ` +
+              '[RelGate](https://github.com/MigrateIQ/relgate)_',
+          ];
+
+          const body = [...baseLines, ...proSection].join('\n');
+
+          await github.rest.issues.updateComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            comment_id: existing.id,
+            body,
+          });
+
+    - name: Fail if blocking issues found
+      if: inputs.fail-on-issues == 'true'
+      shell: bash
+      env:
+        USINGS_COUNT: ${{ steps.free.outputs.usings-count }}
+        TOOL_ERROR: ${{ steps.free.outputs.tool-error }}
+        BUILD_FAILED: ${{ steps.free.outputs.build-failed }}
+        LICENSED: ${{ steps.license.outputs.licensed }}
+        VULN_FAILED: ${{ steps.vuln.outputs.failed }}
+        SCAN_ERROR: ${{ steps.vuln.outputs.scan_error }}
+        SECRETS_COUNT: ${{ steps.secrets.outputs.count }}
+      run: bash "${{ github.action_path }}/scripts/fail-gate.sh"

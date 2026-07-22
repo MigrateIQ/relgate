@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NoWarn>NU1903;NU1904</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned to old, known-vulnerable versions on purpose: this fixture
+         exists to give the Pro vulnerability scan something real to find
+         (High + Critical severity), so keep these pinned even if newer,
+         patched versions are available. NoWarn above silences the restore
+         warnings so the free-tier build-health check doesn't flag these as
+         a build failure. -->
+    <PackageReference Include="Newtonsoft.Json" Version="9.0.1" />
+    <PackageReference Include="System.Text.Encodings.Web" Version="4.5.0" />
+  </ItemGroup>
+
+</Project>
