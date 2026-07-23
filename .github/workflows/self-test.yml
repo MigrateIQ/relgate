@@ -15,7 +15,7 @@ permissions:
 #
 # Assertion logic lives under .github/scripts/self-test/ rather than
 # inline here, mirroring the same pro/scripts/ split used in pro/action.yml
-# — steps stay declarative, scripts stay independently readable/testable.
+# - steps stay declarative, scripts stay independently readable/testable.
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -54,6 +54,36 @@ jobs:
           NULLABLE: ${{ steps.relgate.outputs.nullable-count }}
           BUILD_FAILED: ${{ steps.relgate.outputs.build-failed }}
         run: bash .github/scripts/self-test/${{ matrix.assert }}
+
+  # Every fixture above lives inside this same repo, so it inherits this
+  # repo's own root .editorconfig (which enables IDE0005) - that alone
+  # would never catch a regression to the "target repo has no
+  # .editorconfig at all" case, which is exactly what broke silently on
+  # a real external repo. Remove it here to actually exercise that path.
+  usings-check-without-editorconfig:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove this repo's own .editorconfig for this job only
+        run: mv .editorconfig /tmp/editorconfig-backup
+      - id: relgate
+        uses: ./
+        with:
+          project-path: test-fixtures/dirty/Dirty.csproj
+          changed-files-only: 'false'
+          fail-on-issues: 'false'
+      - name: Restore this repo's .editorconfig
+        if: always()
+        run: mv /tmp/editorconfig-backup .editorconfig
+      - name: Assert unused usings are still caught with no ambient config
+        shell: bash
+        env:
+          USINGS: ${{ steps.relgate.outputs.usings-count }}
+        run: |
+          if [ "$USINGS" != "1" ]; then
+            echo "::error::expected usings-count=1, got $USINGS"
+            exit 1
+          fi
 
   fail-on-issues-gate:
     runs-on: ubuntu-latest
