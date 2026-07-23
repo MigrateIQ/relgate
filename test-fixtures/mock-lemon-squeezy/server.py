@@ -11,7 +11,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
-PRODUCT_ID = 1001
+PRODUCT_ID = 1241016 # RelGate Pro's real Lemon Squeezy product ID
 
 RESPONSES = {
     "valid-pro": {

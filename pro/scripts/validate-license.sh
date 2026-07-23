@@ -14,9 +14,9 @@ fi
 valid=$(echo "$response" | jq -r '.valid // false')
 product_id=$(echo "$response" | jq -r '.meta.product_id // empty')
 
-# 1001 is RelGate Pro's Lemon Squeezy product ID (also used by the
-# self-test mock server). Update once the real product exists.
-if [ "$valid" = "true" ] && [ "$product_id" = "1001" ]; then
+# 1241016 is RelGate Pro's real Lemon Squeezy product ID (also used by the
+# self-test mock server, so self-test validate against the same value production does).
+if [ "$valid" = "true" ] && [ "$product_id" = "1241016" ]; then
   echo "licensed=true" >> "$GITHUB_OUTPUT"
 else
   echo "licensed=false" >> "$GITHUB_OUTPUT"
