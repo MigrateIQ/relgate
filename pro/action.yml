@@ -137,20 +137,81 @@ runs:
         name: relgate-report
         path: ${{ steps.report.outputs.path }}
 
-    - name: Extend PR comment with Pro results
+    - name: Post unified PR comment
       if: |
         steps.license.outputs.licensed == 'true' &&
         github.event_name == 'pull_request'
       uses: actions/github-script@v7
       with:
         script: |
-          const marker = '<!-- relgate-report -->';
-          const copyrightMarker = '<!-- relgate-copyright -->';
+          // Rebuilds the whole comment from scratch (free-tier outputs +
+          // Pro's own results) and overwrites whatever the free action
+          // already posted, rather than splicing a second table below
+          // it — a single table read top to bottom, one true status,
+          // one copyright line, no risk of stale content from a
+          // previous run since nothing here is appended incrementally.
+          const usingsCount = ${{ steps.free.outputs.usings-count || 0 }};
+          const nullableCount = ${{ steps.free.outputs.nullable-count || 0 }};
+          const toolError =
+            '${{ steps.free.outputs.tool-error }}' === 'true';
+          const buildFailed =
+            '${{ steps.free.outputs.build-failed }}' === 'true';
+
           const score = '${{ steps.vuln.outputs.score }}';
-          const failed = '${{ steps.vuln.outputs.failed }}' === 'true';
+          const vulnFailed = '${{ steps.vuln.outputs.failed }}' === 'true';
+          const scanError = '${{ steps.vuln.outputs.scan_error }}' === 'true';
           const benchmark = '${{ inputs.vuln-benchmark }}';
           const threshold = '${{ inputs.vuln-readiness-threshold }}';
           const secretsCount = '${{ steps.secrets.outputs.count }}';
+
+          const totalBlocking =
+            usingsCount + (toolError ? 1 : 0) + (buildFailed ? 1 : 0) +
+            (vulnFailed ? 1 : 0) + (scanError ? 1 : 0) +
+            (secretsCount !== '0' ? 1 : 0);
+          const status = totalBlocking > 0
+            ? '❌ Blocking issues found'
+            : '✅ Clean';
+
+          const rows = [
+            `| Unused usings | 🔴 Blocking | ${usingsCount} |`,
+            `| Nullable warnings | 🟡 Advisory | ${nullableCount} |`,
+          ];
+          if (buildFailed) {
+            rows.push('| Build | 🔴 Blocking | Failed to compile |');
+          }
+          if (toolError) {
+            rows.push('| Lint tool | 🔴 Blocking | Failed to run |');
+          }
+          if (scanError) {
+            rows.push('| Vulnerability scan | 🔴 Blocking | Failed to run |');
+          } else {
+            rows.push(
+              `| Vulnerability readiness | 🔴 Blocking | ${score}/100 ` +
+              `(threshold ${threshold}, benchmark ${benchmark}) |`
+            );
+          }
+          rows.push(`| Secrets found | 🔴 Blocking | ${secretsCount} |`);
+
+          const marker = '<!-- relgate-report -->';
+          const year = new Date().getFullYear();
+          const body = [
+            marker,
+            `### RelGate report — ${status}`,
+            '',
+            '| Category | Severity | Count |',
+            '|---|---|---|',
+            ...rows,
+            '',
+            usingsCount > 0
+              ? '_Run `dotnet format style --diagnostics IDE0005` ' +
+                'locally to fix._'
+              : '',
+            '',
+            '---',
+            '<!-- relgate-copyright -->',
+            `_© ${year} MigrateIQ · ` +
+              '[RelGate](https://github.com/MigrateIQ/relgate)_'
+          ].join('\n');
 
           const { data: comments } = await github.rest.issues.listComments({
             owner: context.repo.owner,
@@ -160,44 +221,22 @@ runs:
           const existing = comments.find(
             (c) => c.body && c.body.includes(marker)
           );
-          if (!existing || existing.body.includes('### RelGate Pro')) {
-            return;
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
           }
-
-          // Drop the free tier's copyright line (and its marker) so the
-          // combined comment ends with exactly one, at the true bottom,
-          // rather than one in the middle and a duplicate at the end.
-          const lines = existing.body.split('\n');
-          const copyrightIndex = lines.indexOf(copyrightMarker);
-          const baseLines = copyrightIndex === -1
-            ? lines
-            : lines.slice(0, copyrightIndex);
-
-          const year = new Date().getFullYear();
-          const proSection = [
-            '',
-            '### RelGate Pro',
-            '',
-            '| Category | Value |',
-            '|---|---|',
-            `| Vulnerability readiness | ${score}/100 ` +
-              `(threshold ${threshold}, benchmark ${benchmark}) ` +
-              `${failed ? '❌' : '✅'} |`,
-            `| Secrets found | ${secretsCount} |`,
-            '',
-            copyrightMarker,
-            `_© ${year} MigrateIQ · ` +
-              '[RelGate](https://github.com/MigrateIQ/relgate)_',
-          ];
-
-          const body = [...baseLines, ...proSection].join('\n');
-
-          await github.rest.issues.updateComment({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            comment_id: existing.id,
-            body,
-          });
 
     - name: Fail if blocking issues found
       if: inputs.fail-on-issues == 'true'
