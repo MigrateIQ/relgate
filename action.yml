@@ -1,52 +1,52 @@
 ---
-name: 'RelGate'
+name: "RelGate"
 description: >-
   Know your .NET release is ready before you tag it. Flags unused usings,
   build warnings, and nullable issues in changed files.
-author: 'MigrateIQ'
+author: "MigrateIQ"
 branding:
-  icon: 'check-circle'
-  color: 'blue'
+  icon: "check-circle"
+  color: "blue"
 
 inputs:
   dotnet-version:
-    description: '.NET SDK version to use'
+    description: ".NET SDK version to use"
     required: false
-    default: '8.0.x'
+    default: "8.0.x"
   project-path:
     description: >-
       Path to a .sln or .csproj to restore/build/format. Leave blank to
       auto-detect a single project or solution at the repo root.
     required: false
-    default: ''
+    default: ""
   changed-files-only:
-    description: 'Only check files changed in the PR (true/false)'
+    description: "Only check files changed in the PR (true/false)"
     required: false
-    default: 'true'
+    default: "true"
   fail-on-issues:
-    description: 'Fail the check if blocking issues are found (true/false)'
+    description: "Fail the check if blocking issues are found (true/false)"
     required: false
-    default: 'true'
+    default: "true"
   hide-pro-hint:
     description: >-
       Internal use only — set by pro/action.yml when it nests this action,
       so licensed Pro users don't see a hint to buy what they already
       have. Not part of the documented public input surface.
     required: false
-    default: 'false'
+    default: "false"
 
 outputs:
   usings-count:
-    description: 'Number of unused-using violations found'
+    description: "Number of unused-using violations found"
     value: ${{ steps.usings.outputs.count }}
   nullable-count:
-    description: 'Number of nullable-warning occurrences found'
+    description: "Number of nullable-warning occurrences found"
     value: ${{ steps.nullable.outputs.count }}
   build-failed:
-    description: 'true if the build failed to compile'
+    description: "true if the build failed to compile"
     value: ${{ steps.nullable.outputs.build_failed }}
   tool-error:
-    description: 'true if the unused-usings tool itself failed to run'
+    description: "true if the unused-usings tool itself failed to run"
     value: ${{ steps.usings.outputs.tool_error }}
 
 runs:
@@ -67,7 +67,7 @@ runs:
       id: changed
       uses: tj-actions/changed-files@v45
       with:
-        files: '**/*.cs'
+        files: "**/*.cs"
 
     - name: Check unused usings (blocking)
       id: usings
@@ -105,9 +105,11 @@ runs:
             ? '❌ Blocking issues found'
             : '✅ Clean';
 
+          const usingsSeverity = usingsCount > 0 ? '🔴 Blocking' : '🟢 Clean';
+          const nullableSeverity = nullableCount > 0 ? '🟡 Advisory' : '🟢 Clean';
           const rows = [
-            `| Unused usings | 🔴 Blocking | ${usingsCount} |`,
-            `| Nullable warnings | 🟡 Advisory | ${nullableCount} |`,
+            `| Unused usings | ${usingsSeverity} | ${usingsCount} |`,
+            `| Nullable warnings | ${nullableSeverity} | ${nullableCount} |`,
           ];
           if (buildFailed) {
             rows.push('| Build | 🔴 Blocking | Failed to compile |');

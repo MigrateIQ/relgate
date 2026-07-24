@@ -1,66 +1,66 @@
 ---
-name: 'RelGate Pro'
+name: "RelGate Pro"
 description: >-
   RelGate's free checks, plus a locally-computed vulnerability readiness
   score and a secret-leakage scan. Requires a Lemon Squeezy license key.
-author: 'MigrateIQ'
+author: "MigrateIQ"
 branding:
-  icon: 'shield'
-  color: 'blue'
+  icon: "shield"
+  color: "blue"
 
 inputs:
   dotnet-version:
-    description: '.NET SDK version to use'
+    description: ".NET SDK version to use"
     required: false
-    default: '8.0.x'
+    default: "8.0.x"
   project-path:
     description: >-
       Path to a .sln or .csproj to restore/build/format. Leave blank to
       auto-detect a single project or solution at the repo root.
     required: false
-    default: ''
+    default: ""
   changed-files-only:
-    description: 'Only check files changed in the PR (true/false)'
+    description: "Only check files changed in the PR (true/false)"
     required: false
-    default: 'true'
+    default: "true"
   fail-on-issues:
-    description: 'Fail the check if blocking issues are found (true/false)'
+    description: "Fail the check if blocking issues are found (true/false)"
     required: false
-    default: 'true'
+    default: "true"
   license-key:
-    description: 'RelGate Pro license key (Lemon Squeezy)'
+    description: "RelGate Pro license key (Lemon Squeezy)"
     required: true
   vuln-readiness-threshold:
     description: >-
       Minimum vulnerability readiness score (0-100) required to pass. This
       is a plain configurable default, not derived from any external data.
     required: false
-    default: '80'
+    default: "80"
   vuln-benchmark:
     description: >-
       Reference readiness score shown alongside your own for context. A
       static, user-editable default — not a live cross-customer comparison.
     required: false
-    default: '75'
+    default: "75"
   license-api-url:
     description: >-
       Base URL for license validation. Defaults to the real Lemon Squeezy
       API — override only to point at a mock server in tests.
     required: false
-    default: 'https://api.lemonsqueezy.com'
+    default: "https://api.lemonsqueezy.com"
 
 outputs:
   licensed:
-    description: 'true if the license key validated successfully'
+    description: "true if the license key validated successfully"
     value: ${{ steps.license.outputs.licensed }}
   vuln-score:
-    description: 'Vulnerability readiness score (0-100), empty if unlicensed'
+    description: "Vulnerability readiness score (0-100), empty if unlicensed"
     value: ${{ steps.vuln.outputs.score }}
   vuln-readiness-failed:
-    description: 'true if the vulnerability score is below the threshold'
+    description: "true if the vulnerability score is below the threshold"
     value: ${{ steps.vuln.outputs.failed }}
   secrets-found:
-    description: 'Number of potential leaked secrets found'
+    description: "Number of potential leaked secrets found"
     value: ${{ steps.secrets.outputs.count }}
 
 runs:
@@ -78,8 +78,8 @@ runs:
         dotnet-version: ${{ inputs.dotnet-version }}
         project-path: ${{ inputs.project-path }}
         changed-files-only: ${{ inputs.changed-files-only }}
-        fail-on-issues: 'false'
-        hide-pro-hint: 'true'
+        fail-on-issues: "false"
+        hide-pro-hint: "true"
 
     - name: Validate license
       id: license
@@ -96,7 +96,7 @@ runs:
       id: secret-changed
       uses: tj-actions/changed-files@v45
       with:
-        files: '**/*'
+        files: "**/*"
 
     - name: Vulnerability scan
       id: vuln
@@ -172,9 +172,15 @@ runs:
             ? '❌ Blocking issues found'
             : '✅ Clean';
 
+          const usingsSeverity = usingsCount > 0 ? '🔴 Blocking' : '🟢 Clean';
+          const nullableSeverity = nullableCount > 0 ? '🟡 Advisory' : '🟢 Clean';
+          const vulnSeverity = vulnFailed ? '🔴 Blocking' : '🟢 Clean';
+          const secretsSeverity = secretsCount !== '0'
+          ? '🔴 Blocking' : '🟢 Clean';
+
           const rows = [
-            `| Unused usings | 🔴 Blocking | ${usingsCount} |`,
-            `| Nullable warnings | 🟡 Advisory | ${nullableCount} |`,
+            `| Unused usings | ${usingsSeverity} | ${usingsCount} |`,
+            `| Nullable warnings | ${nullableSeverity} | ${nullableCount} |`,
           ];
           if (buildFailed) {
             rows.push('| Build | 🔴 Blocking | Failed to compile |');
@@ -183,20 +189,23 @@ runs:
             rows.push('| Lint tool | 🔴 Blocking | Failed to run |');
           }
           if (scanError) {
-            rows.push('| Vulnerability scan | 🔴 Blocking | Failed to run |');
+            rows.push('| Vulnerability scan (Pro)
+             | 🔴 Blocking | Failed to run |');
           } else {
             rows.push(
-              `| Vulnerability readiness | 🔴 Blocking | ${score}/100 ` +
+              `| Vulnerability readiness (Pro) |
+              ${vulnSeverity} | ${score}/100 ` +
               `(threshold ${threshold}, benchmark ${benchmark}) |`
             );
           }
-          rows.push(`| Secrets found | 🔴 Blocking | ${secretsCount} |`);
+          rows.push(`| Secrets found (Pro)
+           | ${secretsSeverity} | ${secretsCount} |`);
 
           const marker = '<!-- relgate-report -->';
           const year = new Date().getFullYear();
           const body = [
             marker,
-            `### RelGate report — ${status}`,
+            `### RelGate Pro report — ${status}`,
             '',
             '| Category | Severity | Count |',
             '|---|---|---|',
