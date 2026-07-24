@@ -107,4 +107,6 @@ In addition to all the free-tier inputs above:
 
 ## License
 
-TBD
+RelGate core (this repo, excluding `pro/`) is licensed under the [MIT License](LICENSE).
+
+RelGate Pro (`pro/`) is licensed under the [Functional Source License, Version 1.1, MIT Future License](pro/LICENSE.md) (FSL-1.1-MIT). You're free to use, read, modify, and redistribute it for any Permitted Purpose — including running it on your own repos and runners — but not to repackage it into a competing product or service. Each version converts to plain MIT two years after its release. See [`pro/LICENSE.md`](pro/LICENSE.md) for the full terms, and [`pro/LICENSING-FAQ.md`](pro/LICENSING-FAQ.md) for a plain-English explainer.
