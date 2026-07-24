@@ -28,8 +28,6 @@ name: RelGate Check
 
 on:
   pull_request:
-    paths:
-      - '**/*.cs'
 
 jobs:
   relgate:
