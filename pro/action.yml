@@ -189,17 +189,19 @@ runs:
             rows.push('| Lint tool | 🔴 Blocking | Failed to run |');
           }
           if (scanError) {
-            rows.push('| Vulnerability scan (Pro)
-             | 🔴 Blocking | Failed to run |');
+            rows.push(
+            '| Vulnerability scan (Pro) | 🔴 Blocking | Failed to run |'
+            );
           } else {
             rows.push(
-              `| Vulnerability readiness (Pro) |
-              ${vulnSeverity} | ${score}/100 ` +
-              `(threshold ${threshold}, benchmark ${benchmark}) |`
+              `| Vulnerability readiness (Pro) | ${vulnSeverity} | ` +
+              `${score}/100 (threshold ${threshold}, ` +
+              `benchmark ${benchmark}) |`
             );
           }
-          rows.push(`| Secrets found (Pro)
-           | ${secretsSeverity} | ${secretsCount} |`);
+          rows.push(
+          `| Secrets found (Pro) | ${secretsSeverity} | ${secretsCount} |`
+          );
 
           const marker = '<!-- relgate-report -->';
           const year = new Date().getFullYear();
