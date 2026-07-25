@@ -66,14 +66,15 @@ outputs:
 runs:
   using: composite
   steps:
-    # Pinned to @main until a v1 tag exists — switch this to @v1 once the
-    # free action has a real release. fail-on-issues is always forced to
-    # 'false' here so the nested action never aborts this job early; the
-    # final "Fail if blocking issues found" step below owns the single,
-    # unified pass/fail decision for both tiers.
+    # Pinned to @v1 so this stays a fully self-contained, immutable
+    # release - not floating on whatever main happens to be. fail-on-
+    # issues is always forced to 'false' here so the nested action never
+    # aborts this job early; the final "Fail if blocking issues found"
+    # step below owns the single, unified pass/fail decision for both
+    # tiers.
     - name: Run RelGate free checks
       id: free
-      uses: MigrateIQ/relgate@main
+      uses: MigrateIQ/relgate@v1
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
         project-path: ${{ inputs.project-path }}
