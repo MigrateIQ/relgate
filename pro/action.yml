@@ -270,7 +270,7 @@ runs:
           } else if (remediateOutcome === 'cpm') {
             rows.push(
               '| Auto-remediation (Pro) | - | skipped - Central Package ' +
-              'Management isn\ 't supported yet |'
+              'Management isn\'t supported yet |'
             );
           } else if (remediateOutcome === 'candidates') {
             rows.push(
@@ -283,17 +283,17 @@ runs:
               `| Auto-remediation (Pro) | 🟡 | fix would break the ` +
               `build not applied |`
             );
-            else if (remediateOutcome === 'pushed-failed') {
+          } else if (remediateOutcome === 'push-failed') {
               rows.push(
                 `| Auto-remediation (Pro) | 🟡 | fix committed locally ` +
                 `but the push failed - see logs |`
               );
-              else if (remediateOutcome === 'no-candidates') {
+          } else if (remediateOutcome === 'no-candidates') {
                 rows.push(
                   `| Auto-remediation (Pro) | 🟢 | no fixable vulnerable ` +
                   `packages found |`
                 );
-              } else if (remediateOutcome === 'ok') {
+          } else if (remediateOutcome === 'ok') {
               const icon = remediateCandidates === 0 ||
               remediateFixed === remediateCandidates ? '🟢' : '🟡';
               const shaNote = remediateSha
