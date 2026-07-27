@@ -304,9 +304,9 @@ runs:
                   `| Auto-remediation (Pro) | ${icon} | ` +
                   `${remediateFixed} of ${remediateCandidates} packages ` +
                   `fixed${shaNote} |`
-                );
-              }
+                );              
           }
+          
           const marker = '<!-- relgate-report -->';
           const year = new Date().getFullYear();
           const body = [
