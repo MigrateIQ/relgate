@@ -109,7 +109,7 @@ runs:
       env:
         CHANGED_FILES: ${{ steps.all-changed.outputs.all_changed_files }}
         PR_SIZE_THRESHOLD: ${{ inputs.pr-size-threshold }}
-      run: bash "${{ github.action_path }}/scripts/count-pr-size.sh"
+      run: bash "${{ github.action_path }}/scripts/check-pr-size.sh"
 
     - name: Post consolidated PR comment
       if: github.event_name == 'pull_request'
