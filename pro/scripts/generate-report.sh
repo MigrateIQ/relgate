@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Inputs (env): LICENSED, USINGS_COUNT, NULLABLE_COUNT, BUILD_FAILED,
 #               VULN_SCORE, VULN_FAILED, VULN_BENCHMARK, VULN_THRESHOLD,
-#               SECRETS_COUNT
+#               SECRETS_COUNT, REMEDIATE_OUTCOME, REMEDIATE_FIXED,
+#               REMEDIATE_CANDIDATES
 # Outputs: path
 
 report_path="$RUNNER_TEMP/relgate-report.html"
@@ -39,9 +40,15 @@ report_path="$RUNNER_TEMP/relgate-report.html"
       sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' secret-hits.txt
       echo "</pre>"
     fi
+
+    if [ -n "$REMEDIATE_OUTCOME" ]; then
+      echo "<h2>Pro: Auto-remediation</h2>"
+      echo "<p>Outcome: $REMEDIATE_OUTCOME</p>"
+      echo "<p>Fixed: $REMEDIATE_FIXED of $REMEDIATE_CANDIDATES vulnerable package(s)</p>"
+    fi
   else
     echo "<h2>Pro features</h2>"
-    echo "<p>Not licensed — showing free-tier results only.</p>"
+    echo "<p>Not licensed - showing free-tier results only.</p>"
   fi
 
   year=$(date +%Y)
