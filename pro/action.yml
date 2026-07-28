@@ -243,7 +243,8 @@ runs:
             rows.push('| Lint tool | 🔴 Blocking | Failed to run |');
           }
           rows.push(
-          `| PR size | ${prSizeSeverity} | ${prFileCount} files changed |`
+          `| PR size | ${prSizeSeverity} | ${prFileCount} ` +
+          `file${prFileCount === 1 ? '' : 's'} changed |`
           );
           if (scanError) {
             rows.push(
@@ -304,9 +305,9 @@ runs:
                   `| Auto-remediation (Pro) | ${icon} | ` +
                   `${remediateFixed} of ${remediateCandidates} packages ` +
                   `fixed${shaNote} |`
-                );              
+                );
           }
-          
+
           const marker = '<!-- relgate-report -->';
           const year = new Date().getFullYear();
           const body = [

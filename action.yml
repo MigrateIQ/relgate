@@ -146,7 +146,8 @@ runs:
             rows.push('| Lint tool | 🔴 Blocking | Failed to run |');
           }
           rows.push(
-          `| PR size | ${prSizeSeverity} | ${prFileCount} files changed |`
+          `| PR size | ${prSizeSeverity} | ${prFileCount} ` +
+          `file${prFileCount === 1 ? '' : 's'} changed |`
           );
 
           const hideProHint = '${{ inputs.hide-pro-hint }}' === 'true';
