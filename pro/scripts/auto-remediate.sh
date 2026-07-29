@@ -233,7 +233,8 @@ if ! dotnet build "${build_path_args[@]}" >/dev/null 2>&1; then
   exit 0
 fi
 
-mapfile -t changed_files < <(git diff --name-only -- '*.csproj')
+mapfile -t changed_files < <(git diff --name-only -- \
+  '*.csproj' ':(exclude,glob)**/obj/**' ':(exclude,glob)**/bin/**')
 if [ "${#changed_files[@]}" -eq 0 ]; then
   emit "$already_fixed" "ok"
   exit 0

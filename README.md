@@ -19,6 +19,7 @@ scattered warnings.
 | Vulnerability readiness score | – | ✅ Blocking |
 | Secret-leakage scan | – | ✅ Blocking |
 | Auto-remediation for vulnerable packages | - | ✅ Opt-in |
+| Auto-fix unused usings | - | ✅ Opt-in |
 | On-the-fly HTML report | – | ✅ |
 | Runs entirely on your own runner | ✅ | ✅ (no dashboard, no telemetry) |
 | License required | No | Yes ([Lemon Squeezy](https://lemonsqueezy.com)) |
@@ -104,6 +105,7 @@ In addition to all the free-tier inputs above:
 | `vuln-benchmark` | `75` | Reference score shown alongside your own |
 | `license-api-url` | Lemon Squeezy's API | Override only for testing | 
 | `auto-remediate` | `false` | Opt-in: push a fix commit for vulnerable packages with a known patch |
+| `auto-fix-usings` | `false` | Opt-in: push a fix commit that removes unused usings |
 
 ### Auto-remediation
 
@@ -124,6 +126,7 @@ jobs:
         with:
           license-key: ${{ secrets.RELGATE_LICENSE_KEY }}
           auto-remediate: "true"
+```
 
 `contents: write` must be granted on the calling job — composite actions
 can't elevate their own permissions.
@@ -146,7 +149,48 @@ can't elevate their own permissions.
   number.
 - A push made with the default `GITHUB_TOKEN` does **not** re-trigger the
   `pull_request` check, so the PR's status won't auto-refresh after a fix
-  is pushed — re-run the check manually to see the updated status.
+  is pushed. Re-running the existing check replays the *same* commit it
+  originally ran against — it won't pick up the fix. Push a new commit or
+  reopen the PR to get a fresh check against the fixed code.
+ 
+### Auto-fix usings
+ 
+Enabling `auto-fix-usings: true` lets Pro push a commit to the PR branch
+that removes unused usings (the same fix `dotnet format style
+--diagnostics IDE0005` would apply locally), instead of only reporting
+them:
+ 
+```yaml
+jobs:
+  relgate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required in addition to pull-requests: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: MigrateIQ/relgate/pro@v1
+        with:
+          license-key: ${{ secrets.RELGATE_LICENSE_KEY }}
+          auto-fix-usings: "true"
+ ```
+
+Uses the same `contents: write` permission as `auto-remediate` — enabling
+both costs no extra setup.
+ 
+**Scope and known limitations, by design:**
+ 
+- Only fixes usings within the same changed-files scope the free-tier
+  check already used — it won't clean up unrelated repo-wide debt.
+- After removing usings, RelGate rebuilds the project. If the build
+  breaks (rare — e.g. a using needed only for a conditional-compilation
+  branch), the fix is discarded — no commit is made.
+- Fork PRs are skipped — a fork's `GITHUB_TOKEN` can't push to the base
+  repo.
+- The "Unused usings" row keeps reflecting the pre-fix state honestly;
+  the "Auto-fix usings" row reports what was actually done about it.
+- Same push-doesn't-auto-refresh limitation as auto-remediation above —
+  push a new commit or reopen the PR to see it reflected.
 
 ## Roadmap
 
