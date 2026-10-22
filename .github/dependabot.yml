@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Keeps the third-party actions used by action.yml, pro/action.yml and
+  # the workflows (checkout, setup-dotnet, tj-actions/changed-files,
+  # github-script, upload-artifact) from silently going stale.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"

@@ -1,13 +1,13 @@
 ---
 name: Self-test
-
+ 
 on:
   push:
   workflow_dispatch:
-
+ 
 permissions:
   contents: read
-
+ 
 # Note: these fixtures are exercised via `push`/`workflow_dispatch`, never
 # `pull_request`, so RelGate's own PR-comment step (gated on
 # `github.event_name == 'pull_request'`) never runs here. That path isn't
@@ -24,9 +24,34 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - run: pip install yamllint
-      - run: yamllint action.yml
-
+      - run: pip install yamllint actionlint-py shellcheck-py
+      - run: yamllint action.yml pro/action.yml
+      - name: actionlint (workflows)
+        run: actionlint
+      - name: shellcheck (action scripts and self-test assertions)
+        run: >-
+          shellcheck -S warning scripts/*.sh pro/scripts/*.sh
+          .github/scripts/self-test/*.sh
+      - name: Unit tests (version comparison)
+        run: bash .github/scripts/self-test/test-semver.sh
+      - name: Unit tests (inline annotations)
+        run: bash .github/scripts/self-test/test-annotate.sh
+      - name: Unit tests (SARIF generation)
+        run: bash .github/scripts/self-test/test-sarif.sh
+      - name: Unit tests (baseline mode)
+        run: bash .github/scripts/self-test/test-baseline.sh
+      - name: Unit tests (Central Package Management)
+        run: bash .github/scripts/self-test/test-cpm.sh
+      - name: Unit tests (config file, path excludes, fail gates)
+        run: |
+          bash .github/scripts/self-test/test-config.sh
+          bash .github/scripts/self-test/test-exclude.sh
+          bash .github/scripts/self-test/test-fail-gate.sh
+      - name: Syntax-check github-script blocks
+        run: >-
+          python .github/scripts/self-test/check-github-script.py
+          action.yml pro/action.yml .github/workflows/pr-integration.yml
+ 
   free-tier-fixtures:
     runs-on: ubuntu-latest
     strategy:
@@ -54,7 +79,7 @@ jobs:
           NULLABLE: ${{ steps.relgate.outputs.nullable-count }}
           BUILD_FAILED: ${{ steps.relgate.outputs.build-failed }}
         run: bash .github/scripts/self-test/${{ matrix.assert }}
-
+ 
   # Every fixture above lives inside this same repo, so it inherits this
   # repo's own root .editorconfig (which enables IDE0005) - that alone
   # would never catch a regression to the "target repo has no
@@ -84,7 +109,66 @@ jobs:
             echo "::error::expected usings-count=1, got $USINGS"
             exit 1
           fi
-
+ 
+  # .relgate.yml: an advisory check is still reported but must not fail the
+  # job, even with fail-on-issues on (the dirty fixture has unused usings).
+  config-advisory-severity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: relgate
+        uses: ./
+        with:
+          project-path: test-fixtures/dirty/Dirty.csproj
+          changed-files-only: 'false'
+          fail-on-issues: 'true'
+          config-file: test-fixtures/config/usings-advisory.yml
+      - name: Assert usings were reported but did not fail the job
+        shell: bash
+        env:
+          USINGS: ${{ steps.relgate.outputs.usings-count }}
+        run: bash .github/scripts/self-test/assert-config-advisory.sh
+ 
+  # .relgate.yml: findings in excluded paths are dropped before counting.
+  config-excludes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: relgate
+        uses: ./
+        with:
+          project-path: test-fixtures/dirty/Dirty.csproj
+          changed-files-only: 'false'
+          fail-on-issues: 'true'
+          config-file: test-fixtures/config/exclude-dirty.yml
+      - name: Assert excluded findings are not counted
+        shell: bash
+        env:
+          USINGS: ${{ steps.relgate.outputs.usings-count }}
+          NULLABLE: ${{ steps.relgate.outputs.nullable-count }}
+        run: bash .github/scripts/self-test/assert-config-excluded.sh
+ 
+  # An invalid config must fail loudly, never fall back to defaults.
+  config-invalid:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run RelGate with an invalid config, expecting failure
+        id: relgate
+        continue-on-error: true
+        uses: ./
+        with:
+          project-path: test-fixtures/clean/Clean.csproj
+          changed-files-only: 'false'
+          fail-on-issues: 'false'
+          config-file: test-fixtures/config/invalid.yml
+      - name: Assert the step failed
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.relgate.outcome }}
+          MESSAGE: expected RelGate to reject the invalid config
+        run: bash .github/scripts/self-test/assert-step-failed.sh
+ 
   fail-on-issues-gate:
     runs-on: ubuntu-latest
     steps:
@@ -103,7 +187,7 @@ jobs:
           OUTCOME: ${{ steps.relgate.outcome }}
           MESSAGE: expected RelGate to fail on the dirty fixture
         run: bash .github/scripts/self-test/assert-step-failed.sh
-
+ 
   pro-licensed:
     runs-on: ubuntu-latest
     steps:
@@ -118,6 +202,15 @@ jobs:
           fail-on-issues: 'false'
           license-key: valid-pro
           license-api-url: http://127.0.0.1:8085
+          # Generation is asserted below. The upload itself is expected to
+          # be rejected here (no security-events permission) and is
+          # continue-on-error by design.
+          upload-sarif: 'true'
+      - name: Assert SARIF was generated
+        shell: bash
+        env:
+          SARIF_PATH: ${{ steps.relgate.outputs.sarif-path }}
+        run: bash .github/scripts/self-test/assert-sarif-generated.sh
       - name: Assert Pro checks actually ran
         shell: bash
         env:
@@ -126,7 +219,7 @@ jobs:
           FAILED: ${{ steps.relgate.outputs.vuln-readiness-failed }}
           SECRETS: ${{ steps.relgate.outputs.secrets-found }}
         run: bash .github/scripts/self-test/assert-pro-licensed.sh
-
+ 
   pro-rejected-license:
     runs-on: ubuntu-latest
     strategy:
@@ -149,7 +242,7 @@ jobs:
         env:
           LICENSED: ${{ steps.relgate.outputs.licensed }}
         run: bash .github/scripts/self-test/assert-unlicensed.sh
-
+ 
   pro-api-unreachable:
     runs-on: ubuntu-latest
     steps:
