@@ -7,7 +7,7 @@ author: "MigrateIQ"
 branding:
   icon: "shield"
   color: "blue"
- 
+
 inputs:
   dotnet-version:
     description: ".NET SDK version to use"
@@ -122,7 +122,7 @@ inputs:
       fork PRs.
     required: false
     default: "false"
- 
+
 outputs:
   licensed:
     description: "true if the license key validated successfully"
@@ -145,7 +145,7 @@ outputs:
   sarif-path:
     description: "Generated SARIF file path, empty if upload-sarif is off"
     value: ${{ steps.sarif.outputs.path }}
- 
+
 runs:
   using: composite
   steps:
@@ -162,7 +162,7 @@ runs:
       env:
         CONFIG_FILE: ${{ inputs.config-file }}
       run: bash "${{ github.action_path }}/../scripts/resolve-config.sh"
- 
+
     - name: Validate license
       id: license
       shell: bash
@@ -170,7 +170,7 @@ runs:
         LICENSE_API_URL: ${{ inputs.license-api-url }}
         LICENSE_KEY: ${{ inputs.license-key }}
       run: bash "${{ github.action_path }}/scripts/validate-license.sh"
- 
+
     # Pinned to @v1 so this stays a fully self-contained, immutable
     # release - not floating on whatever main happens to be. fail-on-
     # issues is always forced to 'false' here so the nested action never
@@ -193,7 +193,7 @@ runs:
         fail-on-issues: "false"
         hide-pro-hint: "true"
         skip-comment: ${{ steps.license.outputs.licensed }}
- 
+
     - name: Get changed files for secret scan
       if: |
         steps.license.outputs.licensed == 'true' &&
@@ -203,7 +203,7 @@ runs:
       with:
         separator: "\n"
         files: "**/*"
- 
+
     # Free tier's own "Get changed .cs files" step runs inside the nested
     # `uses: MigrateIQ/relgate@v1` action above and isn't exposed as an
     # output here, so auto-fix-usings needs its own copy of this list to
@@ -218,7 +218,7 @@ runs:
       with:
         separator: "\n"
         files: "**/*.cs"
- 
+
     # Reuses steps.free.outputs.usings-count for a fast idempotent skip
     # (no need to re-run dotnet format if there's nothing to fix). Needs
     # contents:write on the calling job, same as auto-remediate below.
@@ -240,7 +240,7 @@ runs:
             github.event.pull_request.head.repo.full_name != github.repository
           }}
       run: bash "${{ github.action_path }}/scripts/auto-fix-usings.sh"
- 
+
     - name: Vulnerability scan
       id: vuln
       if: |
@@ -251,7 +251,7 @@ runs:
         PROJECT_PATH: ${{ inputs.project-path }}
         VULN_THRESHOLD: ${{ inputs.vuln-readiness-threshold }}
       run: bash "${{ github.action_path }}/scripts/vuln-scan.sh"
- 
+
     # Reuses vuln-output.json written by the step above - no second
     # `dotnet list`. Needs contents:write on the calling job (composite
     # actions can't grant themselves permissions); see the README.
@@ -271,7 +271,7 @@ runs:
             github.event.pull_request.head.repo.full_name != github.repository
           }}
       run: bash "${{ github.action_path }}/scripts/auto-remediate.sh"
- 
+
     - name: Secret scan
       id: secrets
       if: |
@@ -284,7 +284,7 @@ runs:
         SECRET_EXCLUDE: ${{ inputs.secret-scan-exclude }}
         RELGATE_EXCLUDE: ${{ steps.config.outputs.exclude }}
       run: bash "${{ github.action_path }}/scripts/secret-scan.sh"
- 
+
     # Reads usings-output.txt (left by the nested free action) and
     # secret-hits.txt, so it must run after the secret scan. Its new_*
     # outputs, when present, replace the raw counts in the gate and the
@@ -299,7 +299,7 @@ runs:
         MODE: ${{ inputs.baseline-write == 'true' && 'write' || 'apply' }}
         BASELINE_FILE: ${{ inputs.baseline-file }}
       run: bash "${{ github.action_path }}/scripts/baseline.sh"
- 
+
     - name: Upload baseline
       if: steps.baseline.outputs.written != ''
       uses: actions/upload-artifact@v4
@@ -307,7 +307,7 @@ runs:
         name: relgate-baseline
         path: ${{ steps.baseline.outputs.written }}
         overwrite: true
- 
+
     # Reads the files the steps above left in the workspace (usings /
     # nullable diagnostics from the nested free action, secret-hits.txt,
     # vuln-output.json), so it must run after them.
@@ -318,7 +318,7 @@ runs:
         inputs.upload-sarif == 'true'
       shell: bash
       run: bash "${{ github.action_path }}/scripts/generate-sarif.sh"
- 
+
     # Never fails the check: forks, missing 'security-events: write' and
     # repos without code scanning all reject uploads, and none of those
     # should turn a clean PR red.
@@ -329,7 +329,7 @@ runs:
       with:
         sarif_file: ${{ steps.sarif.outputs.path }}
         category: relgate
- 
+
     - name: Generate report
       id: report
       shell: bash
@@ -349,7 +349,7 @@ runs:
         AUTOFIX_OUTCOME: ${{ steps.fix-usings.outputs.outcome }}
         AUTOFIX_FIXED: ${{ steps.fix-usings.outputs.fixed_count }}
       run: bash "${{ github.action_path }}/scripts/generate-report.sh"
- 
+
     - name: Upload report
       if: steps.license.outputs.licensed == 'true'
       uses: actions/upload-artifact@v4
@@ -357,7 +357,7 @@ runs:
         name: ${{ inputs.report-artifact-name }}
         path: ${{ steps.report.outputs.path }}
         overwrite: true
- 
+
     - name: Post unified PR comment
       if: |
         !cancelled() &&
@@ -389,7 +389,7 @@ runs:
             '${{ steps.free.outputs.tool-error }}' === 'true';
           const buildFailed =
             '${{ steps.free.outputs.build-failed }}' === 'true';
- 
+
           const score = '${{ steps.vuln.outputs.score }}';
           const vulnFailed = '${{ steps.vuln.outputs.failed }}' === 'true';
           const scanError = '${{ steps.vuln.outputs.scan_error }}' === 'true';
@@ -401,19 +401,19 @@ runs:
             Number('${{ steps.baseline.outputs.baselined_secrets }}') || 0;
           const secretsCount =
             newSecrets !== '' ? newSecrets : rawSecretsCount;
- 
+
           const remediateOutcome = '${{ steps.remediate.outputs.outcome }}';
           const remediateFixed =
           ${{ steps.remediate.outputs.fixed_count || 0 }};
           const remediateCandidates =
           ${{ steps.remediate.outputs.candidate_count || 0 }};
           const remediateSha = '${{ steps.remediate.outputs.commit_sha }}';
- 
+
           const autofixOutcome = '${{ steps.fix-usings.outputs.outcome }}';
           const autofixFixed =
           ${{ steps.fix-usings.outputs.fixed_count || 0 }};
           const autofixSha = '${{ steps.fix-usings.outputs.commit_sha }}';
- 
+
           // Severities come from .relgate.yml (blocking | advisory | off);
           // only 'blocking' findings count toward the status, and 'off'
           // checks get no row.
@@ -431,7 +431,7 @@ runs:
           const usingsBlocking = usingsCfg === 'blocking';
           // An empty count means the secret scan didn't run (turned off).
           const secretsFlagged = secretsCount !== '' && secretsCount !== '0';
- 
+
           const totalBlocking =
             (usingsBlocking ? usingsCount : 0) +
             (usingsBlocking && toolError ? 1 : 0) +
@@ -442,10 +442,10 @@ runs:
           const status = totalBlocking > 0
             ? '❌ Blocking issues found'
             : '✅ Clean';
- 
+
           const prSizeSeverity =
           prFileCount > prSizeThreshold ? '🟡 Advisory' : '🟢 Clean';
- 
+
           const rows = [];
           if (usingsCfg !== 'off') {
             rows.push(
@@ -501,7 +501,7 @@ runs:
               '- download the relgate-baseline artifact and commit it |'
             );
           }
- 
+
           // Never blocking - this is a bonus action on top of the
           // (already-reported) vulnerability score, not a gate.
           if (remediateOutcome === 'fork') {
@@ -543,7 +543,7 @@ runs:
                   `fixed${shaNote} |`
                 );
           }
- 
+
           // Same "never blocking" principle as auto-remediation above -
           // the Unused usings row keeps reflecting the pre-fix state
           // honestly, this row just reports what auto-fix-usings did
@@ -582,7 +582,7 @@ runs:
             `file${autofixFixed === 1 ? '' : 's'} fixed${shaNote} |`
             );
           }
- 
+
           // file:line:type only - the scan never records matched values.
           let secretHits = '';
           try {
@@ -602,7 +602,7 @@ runs:
           } catch (e) {
             // no hits file (scan didn't run) - nothing to list
           }
- 
+
           const marker = '<!-- relgate-report -->';
           const year = new Date().getFullYear();
           const body = [
@@ -625,7 +625,7 @@ runs:
             `_© ${year} MigrateIQ · ` +
               '[RelGate](https://github.com/MigrateIQ/relgate)_'
           ].join('\n');
- 
+
           // Fork PRs get a read-only GITHUB_TOKEN (and some orgs default it
           // to read-only), so posting can 403. That must not fail the
           // check - fall back to the job summary instead.
@@ -642,7 +642,7 @@ runs:
             const existing = comments.find(
               (c) => c.body && c.body.includes(marker)
             );
- 
+
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -665,7 +665,7 @@ runs:
             );
             await core.summary.addRaw(body, true).write();
           }
- 
+
     - name: Fail if blocking issues found
       if: inputs.fail-on-issues == 'true'
       shell: bash

@@ -7,7 +7,7 @@ author: "MigrateIQ"
 branding:
   icon: "check-circle"
   color: "blue"
- 
+
 inputs:
   dotnet-version:
     description: ".NET SDK version to use"
@@ -56,7 +56,7 @@ inputs:
       part of the documented public input surface.
     required: false
     default: "false"
- 
+
 outputs:
   usings-count:
     description: "Number of unused-using violations found"
@@ -79,14 +79,14 @@ outputs:
   nullable-severity:
     description: "Resolved severity of the nullable-warnings check"
     value: ${{ steps.config.outputs.nullable_severity }}
- 
+
 runs:
   using: composite
   steps:
     - uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
- 
+
     # Fails the job on an invalid .relgate.yml rather than silently using
     # defaults - a typo must not weaken the gate.
     - name: Load RelGate config
@@ -95,13 +95,13 @@ runs:
       env:
         CONFIG_FILE: ${{ inputs.config-file }}
       run: bash "${{ github.action_path }}/scripts/resolve-config.sh"
- 
+
     - name: Restore
       shell: bash
       env:
         PROJECT_PATH: ${{ inputs.project-path }}
       run: bash "${{ github.action_path }}/scripts/restore.sh"
- 
+
     - name: Get changed .cs files
       if: inputs.changed-files-only == 'true'
       id: changed
@@ -109,7 +109,7 @@ runs:
       with:
         separator: "\n"
         files: "**/*.cs"
- 
+
     - name: Check unused usings
       id: usings
       shell: bash
@@ -120,7 +120,7 @@ runs:
         USINGS_SEVERITY: ${{ steps.config.outputs.usings_severity }}
         RELGATE_EXCLUDE: ${{ steps.config.outputs.exclude }}
       run: bash "${{ github.action_path }}/scripts/check-usings.sh"
- 
+
     - name: Check nullable warnings and build health
       id: nullable
       shell: bash
@@ -131,7 +131,7 @@ runs:
         NULLABLE_SEVERITY: ${{ steps.config.outputs.nullable_severity }}
         RELGATE_EXCLUDE: ${{ steps.config.outputs.exclude }}
       run: bash "${{ github.action_path }}/scripts/check-nullable-and-build.sh"
- 
+
     - name: Get all changed files for PR size
       if: github.event_name == 'pull_request'
       id: all-changed
@@ -139,7 +139,7 @@ runs:
       with:
         separator: "\n"
         files: "**/*"
- 
+
     - name: Check PR size (advisory)
       id: pr-size
       shell: bash
@@ -147,7 +147,7 @@ runs:
         CHANGED_FILES: ${{ steps.all-changed.outputs.all_changed_files }}
         PR_SIZE_THRESHOLD: ${{ inputs.pr-size-threshold }}
       run: bash "${{ github.action_path }}/scripts/check-pr-size.sh"
- 
+
     - name: Post consolidated PR comment
       if: |
         !cancelled() &&
@@ -164,7 +164,7 @@ runs:
             '${{ steps.usings.outputs.tool_error }}' === 'true';
           const buildFailed =
             '${{ steps.nullable.outputs.build_failed }}' === 'true';
- 
+
           // Severities come from .relgate.yml (blocking | advisory | off);
           // only 'blocking' findings fail the check or count toward the
           // status, and 'off' checks get no row.
@@ -176,7 +176,7 @@ runs:
             ? (cfg === 'blocking' ? '🔴 Blocking' : '🟡 Advisory')
             : '🟢 Clean');
           const usingsBlocking = usingsCfg === 'blocking';
- 
+
           const totalBlocking =
             (usingsBlocking ? usingsCount : 0) +
             (usingsBlocking && toolError ? 1 : 0) +
@@ -185,7 +185,7 @@ runs:
           const status = totalBlocking > 0
             ? '❌ Blocking issues found'
             : '✅ Clean';
- 
+
           const prSizeSeverity =
             prFileCount > prSizeThreshold ? '🟡 Advisory' : '🟢 Clean';
           const rows = [];
@@ -214,7 +214,7 @@ runs:
           `| PR size | ${prSizeSeverity} | ${prFileCount} ` +
           `file${prFileCount === 1 ? '' : 's'} changed |`
           );
- 
+
           const hideProHint = '${{ inputs.hide-pro-hint }}' === 'true';
           const marker = '<!-- relgate-report -->';
           const year = new Date().getFullYear();
@@ -242,7 +242,7 @@ runs:
             `_© ${year} MigrateIQ · ` +
               '[RelGate](https://github.com/MigrateIQ/relgate)_'
           ].filter((line) => line !== null).join('\n');
- 
+
           // Fork PRs get a read-only GITHUB_TOKEN (and some orgs default it
           // to read-only), so posting can 403. That must not fail the
           // check - fall back to the job summary instead.
@@ -259,7 +259,7 @@ runs:
             const existing = comments.find(
               (c) => c.body && c.body.includes(marker)
             );
- 
+
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -282,7 +282,7 @@ runs:
             );
             await core.summary.addRaw(body, true).write();
           }
- 
+
     - name: Fail if blocking issues found
       if: inputs.fail-on-issues == 'true'
       shell: bash
