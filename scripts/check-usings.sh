@@ -1,12 +1,27 @@
 #!/usr/bin/env bash
 # Inputs (env): PROJECT_PATH, CHANGED_ONLY, CHANGED_FILES
 # Outputs: count, tool_error
-
+ 
+# Optional env, from .relgate.yml: USINGS_SEVERITY (blocking|advisory|off,
+# default blocking), RELGATE_EXCLUDE (newline-separated globs).
+ 
+# shellcheck source=annotate.sh
+. "$(dirname "${BASH_SOURCE[0]}")/annotate.sh"
+# shellcheck source=exclude.sh
+. "$(dirname "${BASH_SOURCE[0]}")/exclude.sh"
+ 
 path_args=()
 if [ -n "$PROJECT_PATH" ]; then
   path_args=("$PROJECT_PATH")
 fi
-
+ 
+if [ "${USINGS_SEVERITY:-blocking}" = "off" ]; then
+  echo "Unused-usings check turned off in .relgate.yml - skipping."
+  echo "count=0" >> "$GITHUB_OUTPUT"
+  echo "tool_error=false" >> "$GITHUB_OUTPUT"
+  exit 0
+fi
+ 
 # changed-files-only with nothing changed means there's nothing for this
 # check to look at - skip rather than falling back to a whole-repo scan
 # that could fail the PR on unrelated debt.
@@ -16,7 +31,7 @@ if [ "$CHANGED_ONLY" = "true" ] && [ -z "$CHANGED_FILES" ]; then
   echo "tool_error=false" >> "$GITHUB_OUTPUT"
   exit 0
 fi
-
+ 
 # IDE0005 (unused usings) is disabled by default in Roslyn – it only
 # fires if a project's .editorconfig explicitly sets its severity, which
 # most repos don't have configured. --severity/--diagnostics only filter
@@ -43,27 +58,39 @@ fi
   echo "dotnet_diagnostic.IDE0005.severity = warning"
 } > "$editorconfig_path.relgate-tmp"
 mv "$editorconfig_path.relgate-tmp" "$editorconfig_path"
-
+ 
 if [ "$CHANGED_ONLY" = "true" ]; then
+  mapfile -t changed_cs < <(printf '%s\n' "$CHANGED_FILES" | sed '/^$/d')
   dotnet format style "${path_args[@]}" \
     --verify-no-changes --severity warn --diagnostics IDE0005 \
-    --include $CHANGED_FILES > usings-output.txt 2>&1
+    --include "${changed_cs[@]}" > usings-output.txt 2>&1
 else
   dotnet format style "${path_args[@]}" \
     --verify-no-changes --severity warn --diagnostics IDE0005 \
     > usings-output.txt 2>&1
 fi
 format_exit=$?
-
+ 
 if [ "$editorconfig_existed" = "true" ]; then
   mv "$editorconfig_backup_path" "$editorconfig_path"
 else
   rm -f "$editorconfig_path" "$editorconfig_backup_path"
 fi
-
+ 
+# Findings in files excluded by .relgate.yml don't count (or annotate).
+filter_excluded_diagnostics usings-output.txt
+ 
 count=$(grep -c "IDE0005" usings-output.txt || true)
+ 
+# Shown inline on the PR diff: errors when the check blocks, warnings when
+# it's advisory.
+annotation_level=error
+[ "${USINGS_SEVERITY:-blocking}" = "advisory" ] && annotation_level=warning
+emit_annotations "$annotation_level" "Unused using" \
+  '[^ ]+\([0-9]+,[0-9]+\): (warning|error) IDE0005' usings-output.txt
+ 
 echo "count=$count" >> "$GITHUB_OUTPUT"
-
+ 
 # Exit code 2 means "violations found" (expected, captured by the grep
 # count above). Anything else non-zero means the tool itself failed to
 # run (bad project, missing SDK, etc.) - don't let that get silently

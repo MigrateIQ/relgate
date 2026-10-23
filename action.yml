@@ -33,6 +33,14 @@ inputs:
       advisory (never blocking) in the report.
     required: false
     default: "20"
+  config-file:
+    description: >-
+      Path to an optional RelGate config file (default '.relgate.yml').
+      It sets per-check severity (blocking / advisory / off) and path
+      excludes; see the README. A missing default file means defaults, but
+      an explicitly named file that doesn't exist is an error.
+    required: false
+    default: ".relgate.yml"
   hide-pro-hint:
     description: >-
       Internal use only — set by pro/action.yml when it nests this action,
@@ -65,6 +73,12 @@ outputs:
   pr-file-count:
     description: "Number of files changed in the PR (0 outside a PR)"
     value: ${{ steps.pr-size.outputs.count }}
+  usings-severity:
+    description: "Resolved severity of the unused-usings check"
+    value: ${{ steps.config.outputs.usings_severity }}
+  nullable-severity:
+    description: "Resolved severity of the nullable-warnings check"
+    value: ${{ steps.config.outputs.nullable_severity }}
 
 runs:
   using: composite
@@ -72,6 +86,15 @@ runs:
     - uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ inputs.dotnet-version }}
+
+    # Fails the job on an invalid .relgate.yml rather than silently using
+    # defaults - a typo must not weaken the gate.
+    - name: Load RelGate config
+      id: config
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config-file }}
+      run: bash "${{ github.action_path }}/scripts/resolve-config.sh"
 
     - name: Restore
       shell: bash
@@ -84,24 +107,29 @@ runs:
       id: changed
       uses: tj-actions/changed-files@v45
       with:
+        separator: "\n"
         files: "**/*.cs"
 
-    - name: Check unused usings (blocking)
+    - name: Check unused usings
       id: usings
       shell: bash
       env:
         PROJECT_PATH: ${{ inputs.project-path }}
         CHANGED_ONLY: ${{ inputs.changed-files-only }}
         CHANGED_FILES: ${{ steps.changed.outputs.all_changed_files }}
+        USINGS_SEVERITY: ${{ steps.config.outputs.usings_severity }}
+        RELGATE_EXCLUDE: ${{ steps.config.outputs.exclude }}
       run: bash "${{ github.action_path }}/scripts/check-usings.sh"
 
-    - name: Check nullable warnings (advisory) and build health
+    - name: Check nullable warnings and build health
       id: nullable
       shell: bash
       env:
         PROJECT_PATH: ${{ inputs.project-path }}
         CHANGED_ONLY: ${{ inputs.changed-files-only }}
         CHANGED_FILES: ${{ steps.changed.outputs.all_changed_files }}
+        NULLABLE_SEVERITY: ${{ steps.config.outputs.nullable_severity }}
+        RELGATE_EXCLUDE: ${{ steps.config.outputs.exclude }}
       run: bash "${{ github.action_path }}/scripts/check-nullable-and-build.sh"
 
     - name: Get all changed files for PR size
@@ -109,6 +137,7 @@ runs:
       id: all-changed
       uses: tj-actions/changed-files@v45
       with:
+        separator: "\n"
         files: "**/*"
 
     - name: Check PR size (advisory)
@@ -121,6 +150,7 @@ runs:
 
     - name: Post consolidated PR comment
       if: |
+        !cancelled() &&
         github.event_name == 'pull_request' &&
         inputs.skip-comment != 'true'
       uses: actions/github-script@v7
@@ -135,25 +165,50 @@ runs:
           const buildFailed =
             '${{ steps.nullable.outputs.build_failed }}' === 'true';
 
+          // Severities come from .relgate.yml (blocking | advisory | off);
+          // only 'blocking' findings fail the check or count toward the
+          // status, and 'off' checks get no row.
+          const usingsCfg =
+            '${{ steps.config.outputs.usings_severity }}' || 'blocking';
+          const nullableCfg =
+            '${{ steps.config.outputs.nullable_severity }}' || 'advisory';
+          const label = (cfg, count) => (count > 0
+            ? (cfg === 'blocking' ? '🔴 Blocking' : '🟡 Advisory')
+            : '🟢 Clean');
+          const usingsBlocking = usingsCfg === 'blocking';
+
           const totalBlocking =
-            usingsCount + (toolError ? 1 : 0) + (buildFailed ? 1 : 0);
+            (usingsBlocking ? usingsCount : 0) +
+            (usingsBlocking && toolError ? 1 : 0) +
+            (buildFailed ? 1 : 0) +
+            (nullableCfg === 'blocking' ? nullableCount : 0);
           const status = totalBlocking > 0
             ? '❌ Blocking issues found'
             : '✅ Clean';
 
-          const usingsSeverity = usingsCount > 0 ? '🔴 Blocking' : '🟢 Clean';
-          const nullableSeverity = nullableCount > 0 ? '🟡 Advisory' : '🟢 Clean';
           const prSizeSeverity =
             prFileCount > prSizeThreshold ? '🟡 Advisory' : '🟢 Clean';
-          const rows = [
-            `| Unused usings | ${usingsSeverity} | ${usingsCount} |`,
-            `| Nullable warnings | ${nullableSeverity} | ${nullableCount} |`,
-          ];
+          const rows = [];
+          if (usingsCfg !== 'off') {
+            rows.push(
+              `| Unused usings | ${label(usingsCfg, usingsCount)} | ` +
+              `${usingsCount} |`
+            );
+          }
+          if (nullableCfg !== 'off') {
+            rows.push(
+              `| Nullable warnings | ${label(nullableCfg, nullableCount)} | ` +
+              `${nullableCount} |`
+            );
+          }
           if (buildFailed) {
             rows.push('| Build | 🔴 Blocking | Failed to compile |');
           }
-          if (toolError) {
-            rows.push('| Lint tool | 🔴 Blocking | Failed to run |');
+          if (toolError && usingsCfg !== 'off') {
+            rows.push(
+              `| Lint tool | ${usingsBlocking ? '🔴 Blocking' : '🟡 Advisory'}` +
+              ' | Failed to run |'
+            );
           }
           rows.push(
           `| PR size | ${prSizeSeverity} | ${prFileCount} ` +
@@ -188,29 +243,44 @@ runs:
               '[RelGate](https://github.com/MigrateIQ/relgate)_'
           ].filter((line) => line !== null).join('\n');
 
-          const { data: comments } = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-          });
-          const existing = comments.find(
-            (c) => c.body && c.body.includes(marker)
-          );
+          // Fork PRs get a read-only GITHUB_TOKEN (and some orgs default it
+          // to read-only), so posting can 403. That must not fail the
+          // check - fall back to the job summary instead.
+          try {
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                per_page: 100,
+              }
+            );
+            const existing = comments.find(
+              (c) => c.body && c.body.includes(marker)
+            );
 
-          if (existing) {
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: existing.id,
-              body,
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+          } catch (error) {
+            core.warning(
+              `RelGate could not post the PR comment (${error.message}) - ` +
+              'writing the report to the job summary instead.'
+            );
+            await core.summary.addRaw(body, true).write();
           }
 
     - name: Fail if blocking issues found
@@ -220,4 +290,7 @@ runs:
         USINGS_COUNT: ${{ steps.usings.outputs.count }}
         TOOL_ERROR: ${{ steps.usings.outputs.tool_error }}
         BUILD_FAILED: ${{ steps.nullable.outputs.build_failed }}
+        NULLABLE_COUNT: ${{ steps.nullable.outputs.count }}
+        USINGS_SEVERITY: ${{ steps.config.outputs.usings_severity }}
+        NULLABLE_SEVERITY: ${{ steps.config.outputs.nullable_severity }}
       run: bash "${{ github.action_path }}/scripts/fail-gate.sh"

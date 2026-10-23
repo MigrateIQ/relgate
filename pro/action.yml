@@ -59,10 +59,60 @@ inputs:
       Opt-in. When 'true', vulnerable top-level packages with a known fixed
       version are bumped and pushed as a commit on the PR branch, instead
       of only being reported. Requires 'contents: write' on the calling
-      job. Skips fork PRs, transitive-only vulnerabilities, and projects
-      using Central Package Management - see the README for details.
+      job. Supports Central Package Management (edits
+      Directory.Packages.props). Skips fork PRs and transitive-only
+      vulnerabilities - see the README for details.
     required: false
     default: "false"
+  secret-scan-exclude:
+    description: >-
+      Space- or comma-separated file globs the secret scan should skip
+      (e.g. "docs/*,*.md"). To suppress a single known-safe line instead,
+      add "relgate:ignore" to it.
+    required: false
+    default: ""
+  config-file:
+    description: >-
+      Path to an optional RelGate config file (default '.relgate.yml'): the
+      per-check severity (blocking / advisory / off) of unused usings,
+      nullable warnings, secrets and vulnerabilities, plus path excludes.
+      See the README. A missing default file means defaults, but an
+      explicitly named file that doesn't exist is an error.
+    required: false
+    default: ".relgate.yml"
+  baseline-file:
+    description: >-
+      Opt-in ratchet mode. Path (relative to the repo root) of a baseline
+      file, e.g. '.relgate/baseline.json'. Unused usings and secret hits
+      already recorded in it are shown as baselined and don't fail the
+      check - only findings beyond the baseline do. Create the file with
+      'baseline-write'. Vulnerable packages are not baselined.
+    required: false
+    default: ""
+  baseline-write:
+    description: >-
+      When 'true' (together with 'baseline-file'), record today's findings
+      to the baseline file instead of gating, and upload it as the
+      'relgate-baseline' artifact to commit. Run it with
+      'changed-files-only: false' so the whole repo is captured.
+    required: false
+    default: "false"
+  upload-sarif:
+    description: >-
+      Opt-in. When 'true', RelGate's findings (unused usings, nullable
+      warnings, secrets, vulnerable packages) are uploaded to GitHub code
+      scanning as SARIF. Requires 'security-events: write' on the calling
+      job, and code scanning to be available for the repository. Fork PRs
+      can't upload; that is not treated as a failure.
+    required: false
+    default: "false"
+  report-artifact-name:
+    description: >-
+      Name of the uploaded HTML report artifact. Set a unique value per
+      invocation (e.g. per matrix leg) if you run Pro more than once in a
+      workflow run.
+    required: false
+    default: "relgate-report"
   auto-fix-usings:
     description: >-
       Opt-in. When 'true', unused usings (IDE0005) are removed and pushed
@@ -92,6 +142,9 @@ outputs:
   usings-fixed-count:
     description: "Number of files fixed by auto-fix-usings"
     value: ${{ steps.fix-usings.outputs.fixed_count }}
+  sarif-path:
+    description: "Generated SARIF file path, empty if upload-sarif is off"
+    value: ${{ steps.sarif.outputs.path }}
 
 runs:
   using: composite
@@ -100,6 +153,16 @@ runs:
     # skip-comment below - whether the free tier stays silent (Pro will
     # post the unified comment itself) or posts as a fallback (unlicensed
     # runs never reach Pro's own comment step, so someone has to post).
+    # Same resolver the free action uses - one script, from this same
+    # release (pro/ sits next to scripts/ in the repo). Fails the job on an
+    # invalid .relgate.yml so a typo can't silently weaken the gate.
+    - name: Load RelGate config
+      id: config
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config-file }}
+      run: bash "${{ github.action_path }}/../scripts/resolve-config.sh"
+
     - name: Validate license
       id: license
       shell: bash
@@ -126,6 +189,7 @@ runs:
         project-path: ${{ inputs.project-path }}
         changed-files-only: ${{ inputs.changed-files-only }}
         pr-size-threshold: ${{ inputs.pr-size-threshold }}
+        config-file: ${{ inputs.config-file }}
         fail-on-issues: "false"
         hide-pro-hint: "true"
         skip-comment: ${{ steps.license.outputs.licensed }}
@@ -137,6 +201,7 @@ runs:
       id: secret-changed
       uses: tj-actions/changed-files@v45
       with:
+        separator: "\n"
         files: "**/*"
 
     # Free tier's own "Get changed .cs files" step runs inside the nested
@@ -151,6 +216,7 @@ runs:
       id: usings-changed
       uses: tj-actions/changed-files@v45
       with:
+        separator: "\n"
         files: "**/*.cs"
 
     # Reuses steps.free.outputs.usings-count for a fast idempotent skip
@@ -177,7 +243,9 @@ runs:
 
     - name: Vulnerability scan
       id: vuln
-      if: steps.license.outputs.licensed == 'true'
+      if: |
+        steps.license.outputs.licensed == 'true' &&
+        steps.config.outputs.vulns_severity != 'off'
       shell: bash
       env:
         PROJECT_PATH: ${{ inputs.project-path }}
@@ -206,12 +274,61 @@ runs:
 
     - name: Secret scan
       id: secrets
-      if: steps.license.outputs.licensed == 'true'
+      if: |
+        steps.license.outputs.licensed == 'true' &&
+        steps.config.outputs.secrets_severity != 'off'
       shell: bash
       env:
         CHANGED_ONLY: ${{ inputs.changed-files-only }}
         CHANGED_FILES: ${{ steps.secret-changed.outputs.all_changed_files }}
+        SECRET_EXCLUDE: ${{ inputs.secret-scan-exclude }}
+        RELGATE_EXCLUDE: ${{ steps.config.outputs.exclude }}
       run: bash "${{ github.action_path }}/scripts/secret-scan.sh"
+
+    # Reads usings-output.txt (left by the nested free action) and
+    # secret-hits.txt, so it must run after the secret scan. Its new_*
+    # outputs, when present, replace the raw counts in the gate and the
+    # PR comment.
+    - name: Apply baseline
+      id: baseline
+      if: |
+        steps.license.outputs.licensed == 'true' &&
+        inputs.baseline-file != ''
+      shell: bash
+      env:
+        MODE: ${{ inputs.baseline-write == 'true' && 'write' || 'apply' }}
+        BASELINE_FILE: ${{ inputs.baseline-file }}
+      run: bash "${{ github.action_path }}/scripts/baseline.sh"
+
+    - name: Upload baseline
+      if: steps.baseline.outputs.written != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: relgate-baseline
+        path: ${{ steps.baseline.outputs.written }}
+        overwrite: true
+
+    # Reads the files the steps above left in the workspace (usings /
+    # nullable diagnostics from the nested free action, secret-hits.txt,
+    # vuln-output.json), so it must run after them.
+    - name: Generate SARIF
+      id: sarif
+      if: |
+        steps.license.outputs.licensed == 'true' &&
+        inputs.upload-sarif == 'true'
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/generate-sarif.sh"
+
+    # Never fails the check: forks, missing 'security-events: write' and
+    # repos without code scanning all reject uploads, and none of those
+    # should turn a clean PR red.
+    - name: Upload SARIF to code scanning
+      if: steps.sarif.outputs.path != ''
+      uses: github/codeql-action/upload-sarif@v3
+      continue-on-error: true
+      with:
+        sarif_file: ${{ steps.sarif.outputs.path }}
+        category: relgate
 
     - name: Generate report
       id: report
@@ -234,13 +351,16 @@ runs:
       run: bash "${{ github.action_path }}/scripts/generate-report.sh"
 
     - name: Upload report
+      if: steps.license.outputs.licensed == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: relgate-report
+        name: ${{ inputs.report-artifact-name }}
         path: ${{ steps.report.outputs.path }}
+        overwrite: true
 
     - name: Post unified PR comment
       if: |
+        !cancelled() &&
         steps.license.outputs.licensed == 'true' &&
         github.event_name == 'pull_request'
       uses: actions/github-script@v7
@@ -252,7 +372,16 @@ runs:
           // it — a single table read top to bottom, one true status,
           // one copyright line, no risk of stale content from a
           // previous run since nothing here is appended incrementally.
-          const usingsCount = ${{ steps.free.outputs.usings-count || 0 }};
+          // With baseline-file set, only findings beyond the baseline
+          // count; the baselined ones are still shown, just not blocking.
+          const rawUsingsCount = ${{ steps.free.outputs.usings-count || 0 }};
+          const newUsings = '${{ steps.baseline.outputs.new_usings }}';
+          const baselinedUsings =
+            Number('${{ steps.baseline.outputs.baselined_usings }}') || 0;
+          const usingsCount =
+            newUsings !== '' ? Number(newUsings) : rawUsingsCount;
+          const baselineWritten = '${{ steps.baseline.outputs.written }}';
+          const baselineNote = (n) => (n > 0 ? ` (+${n} baselined)` : '');
           const nullableCount = ${{ steps.free.outputs.nullable-count || 0 }};
           const prFileCount = ${{ steps.free.outputs.pr-file-count || 0 }};
           const prSizeThreshold = ${{ inputs.pr-size-threshold }};
@@ -266,7 +395,12 @@ runs:
           const scanError = '${{ steps.vuln.outputs.scan_error }}' === 'true';
           const benchmark = '${{ inputs.vuln-benchmark }}';
           const threshold = '${{ inputs.vuln-readiness-threshold }}';
-          const secretsCount = '${{ steps.secrets.outputs.count }}';
+          const rawSecretsCount = '${{ steps.secrets.outputs.count }}';
+          const newSecrets = '${{ steps.baseline.outputs.new_secrets }}';
+          const baselinedSecrets =
+            Number('${{ steps.baseline.outputs.baselined_secrets }}') || 0;
+          const secretsCount =
+            newSecrets !== '' ? newSecrets : rawSecretsCount;
 
           const remediateOutcome = '${{ steps.remediate.outputs.outcome }}';
           const remediateFixed =
@@ -280,50 +414,93 @@ runs:
           ${{ steps.fix-usings.outputs.fixed_count || 0 }};
           const autofixSha = '${{ steps.fix-usings.outputs.commit_sha }}';
 
+          // Severities come from .relgate.yml (blocking | advisory | off);
+          // only 'blocking' findings count toward the status, and 'off'
+          // checks get no row.
+          const usingsCfg =
+            '${{ steps.config.outputs.usings_severity }}' || 'blocking';
+          const nullableCfg =
+            '${{ steps.config.outputs.nullable_severity }}' || 'advisory';
+          const secretsCfg =
+            '${{ steps.config.outputs.secrets_severity }}' || 'blocking';
+          const vulnsCfg =
+            '${{ steps.config.outputs.vulns_severity }}' || 'blocking';
+          const label = (cfg, flagged) => (flagged
+            ? (cfg === 'blocking' ? '🔴 Blocking' : '🟡 Advisory')
+            : '🟢 Clean');
+          const usingsBlocking = usingsCfg === 'blocking';
+          // An empty count means the secret scan didn't run (turned off).
+          const secretsFlagged = secretsCount !== '' && secretsCount !== '0';
+
           const totalBlocking =
-            usingsCount + (toolError ? 1 : 0) + (buildFailed ? 1 : 0) +
-            (vulnFailed ? 1 : 0) + (scanError ? 1 : 0) +
-            (secretsCount !== '0' ? 1 : 0);
+            (usingsBlocking ? usingsCount : 0) +
+            (usingsBlocking && toolError ? 1 : 0) +
+            (buildFailed ? 1 : 0) +
+            (nullableCfg === 'blocking' ? nullableCount : 0) +
+            (vulnsCfg === 'blocking' && (vulnFailed || scanError) ? 1 : 0) +
+            (secretsCfg === 'blocking' && secretsFlagged ? 1 : 0);
           const status = totalBlocking > 0
             ? '❌ Blocking issues found'
             : '✅ Clean';
 
-          const usingsSeverity = usingsCount > 0 ? '🔴 Blocking' : '🟢 Clean';
-          const nullableSeverity = nullableCount > 0 ? '🟡 Advisory' : '🟢 Clean';
           const prSizeSeverity =
           prFileCount > prSizeThreshold ? '🟡 Advisory' : '🟢 Clean';
-          const vulnSeverity = vulnFailed ? '🔴 Blocking' : '🟢 Clean';
-          const secretsSeverity = secretsCount !== '0'
-          ? '🔴 Blocking' : '🟢 Clean';
 
-          const rows = [
-            `| Unused usings | ${usingsSeverity} | ${usingsCount} |`,
-            `| Nullable warnings | ${nullableSeverity} | ${nullableCount} |`,
-          ];
+          const rows = [];
+          if (usingsCfg !== 'off') {
+            rows.push(
+              `| Unused usings | ${label(usingsCfg, usingsCount > 0)} | ` +
+              `${usingsCount}${baselineNote(baselinedUsings)} |`
+            );
+          }
+          if (nullableCfg !== 'off') {
+            rows.push(
+              '| Nullable warnings | ' +
+              `${label(nullableCfg, nullableCount > 0)} | ` +
+              `${nullableCount} |`
+            );
+          }
           if (buildFailed) {
             rows.push('| Build | 🔴 Blocking | Failed to compile |');
           }
-          if (toolError) {
-            rows.push('| Lint tool | 🔴 Blocking | Failed to run |');
+          if (toolError && usingsCfg !== 'off') {
+            rows.push(
+              `| Lint tool | ${usingsBlocking ? '🔴 Blocking' : '🟡 Advisory'}` +
+              ' | Failed to run |'
+            );
           }
           rows.push(
           `| PR size | ${prSizeSeverity} | ${prFileCount} ` +
           `file${prFileCount === 1 ? '' : 's'} changed |`
           );
-          if (scanError) {
+          if (vulnsCfg !== 'off') {
+            if (scanError) {
+              rows.push(
+                '| Vulnerability scan (Pro) | ' +
+                `${label(vulnsCfg, true)} | Failed to run |`
+              );
+            } else {
+              rows.push(
+                '| Vulnerability readiness (Pro) | ' +
+                `${label(vulnsCfg, vulnFailed)} | ` +
+                `${score}/100 (threshold ${threshold}, ` +
+                `benchmark ${benchmark}) |`
+              );
+            }
+          }
+          if (secretsCfg !== 'off') {
             rows.push(
-            '| Vulnerability scan (Pro) | 🔴 Blocking | Failed to run |'
-            );
-          } else {
-            rows.push(
-              `| Vulnerability readiness (Pro) | ${vulnSeverity} | ` +
-              `${score}/100 (threshold ${threshold}, ` +
-              `benchmark ${benchmark}) |`
+              '| Secrets found (Pro) | ' +
+              `${label(secretsCfg, secretsFlagged)} | ` +
+              `${secretsCount}${baselineNote(baselinedSecrets)} |`
             );
           }
-          rows.push(
-          `| Secrets found (Pro) | ${secretsSeverity} | ${secretsCount} |`
-          );
+          if (baselineWritten) {
+            rows.push(
+              `| Baseline (Pro) | 🟢 | written to \`${baselineWritten}\` ` +
+              '- download the relgate-baseline artifact and commit it |'
+            );
+          }
 
           // Never blocking - this is a bonus action on top of the
           // (already-reported) vulnerability score, not a gate.
@@ -331,11 +508,6 @@ runs:
             rows.push(
               '| Auto-remediation (Pro) | - | skipped - fork PRs can\'t ' +
               'receive pushed fixes |'
-            );
-          } else if (remediateOutcome === 'cpm') {
-            rows.push(
-              '| Auto-remediation (Pro) | - | skipped - Central Package ' +
-              'Management isn\'t supported yet |'
             );
           } else if (remediateOutcome === 'candidates') {
             rows.push(
@@ -411,6 +583,26 @@ runs:
             );
           }
 
+          // file:line:type only - the scan never records matched values.
+          let secretHits = '';
+          try {
+            const hits = require('fs')
+              .readFileSync('secret-hits.txt', 'utf8')
+              .split('\n').filter(Boolean);
+            if (hits.length > 0) {
+              secretHits =
+                '**Potential secrets** (file:line:type - values are never ' +
+                'shown; add `relgate:ignore` to a line to suppress a ' +
+                'false positive):\n' +
+                hits.slice(0, 20).map((h) => `- \`${h}\``).join('\n') +
+                (hits.length > 20
+                  ? `\n- …and ${hits.length - 20} more (see the report)`
+                  : '');
+            }
+          } catch (e) {
+            // no hits file (scan didn't run) - nothing to list
+          }
+
           const marker = '<!-- relgate-report -->';
           const year = new Date().getFullYear();
           const body = [
@@ -420,6 +612,8 @@ runs:
             '| Category | Severity | Count |',
             '|---|---|---|',
             ...rows,
+            '',
+            secretHits,
             '',
             usingsCount > 0
               ? '_Run `dotnet format style --diagnostics IDE0005` ' +
@@ -432,29 +626,44 @@ runs:
               '[RelGate](https://github.com/MigrateIQ/relgate)_'
           ].join('\n');
 
-          const { data: comments } = await github.rest.issues.listComments({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            issue_number: context.issue.number,
-          });
-          const existing = comments.find(
-            (c) => c.body && c.body.includes(marker)
-          );
+          // Fork PRs get a read-only GITHUB_TOKEN (and some orgs default it
+          // to read-only), so posting can 403. That must not fail the
+          // check - fall back to the job summary instead.
+          try {
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                per_page: 100,
+              }
+            );
+            const existing = comments.find(
+              (c) => c.body && c.body.includes(marker)
+            );
 
-          if (existing) {
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: existing.id,
-              body,
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body,
-            });
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+          } catch (error) {
+            core.warning(
+              `RelGate could not post the PR comment (${error.message}) - ` +
+              'writing the report to the job summary instead.'
+            );
+            await core.summary.addRaw(body, true).write();
           }
 
     - name: Fail if blocking issues found
@@ -462,10 +671,17 @@ runs:
       shell: bash
       env:
         USINGS_COUNT: ${{ steps.free.outputs.usings-count }}
+        NEW_USINGS: ${{ steps.baseline.outputs.new_usings }}
+        NEW_SECRETS: ${{ steps.baseline.outputs.new_secrets }}
         TOOL_ERROR: ${{ steps.free.outputs.tool-error }}
         BUILD_FAILED: ${{ steps.free.outputs.build-failed }}
         LICENSED: ${{ steps.license.outputs.licensed }}
         VULN_FAILED: ${{ steps.vuln.outputs.failed }}
         SCAN_ERROR: ${{ steps.vuln.outputs.scan_error }}
         SECRETS_COUNT: ${{ steps.secrets.outputs.count }}
+        NULLABLE_COUNT: ${{ steps.free.outputs.nullable-count }}
+        USINGS_SEVERITY: ${{ steps.config.outputs.usings_severity }}
+        NULLABLE_SEVERITY: ${{ steps.config.outputs.nullable_severity }}
+        SECRETS_SEVERITY: ${{ steps.config.outputs.secrets_severity }}
+        VULNS_SEVERITY: ${{ steps.config.outputs.vulns_severity }}
       run: bash "${{ github.action_path }}/scripts/fail-gate.sh"
