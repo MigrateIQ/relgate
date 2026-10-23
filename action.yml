@@ -294,4 +294,3 @@ runs:
         USINGS_SEVERITY: ${{ steps.config.outputs.usings_severity }}
         NULLABLE_SEVERITY: ${{ steps.config.outputs.nullable_severity }}
       run: bash "${{ github.action_path }}/scripts/fail-gate.sh"
- 

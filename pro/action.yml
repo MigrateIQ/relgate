@@ -685,4 +685,3 @@ runs:
         SECRETS_SEVERITY: ${{ steps.config.outputs.secrets_severity }}
         VULNS_SEVERITY: ${{ steps.config.outputs.vulns_severity }}
       run: bash "${{ github.action_path }}/scripts/fail-gate.sh"
- 

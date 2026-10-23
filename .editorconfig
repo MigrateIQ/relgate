@@ -9,3 +9,10 @@ dotnet_diagnostic.CS8600.severity = warning
 dotnet_diagnostic.CS8602.severity = warning
 dotnet_diagnostic.CS8603.severity = warning
 dotnet_diagnostic.CS8604.severity = warning
+
+# The action definitions, workflows and scripts are linted in CI (yamllint,
+# shellcheck). Stray whitespace on blank lines or a missing final newline
+# fails yamllint, so have editors prevent it.
+[*.{yml,yaml,sh}]
+trim_trailing_whitespace = true
+insert_final_newline = true
