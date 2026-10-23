@@ -22,7 +22,7 @@ scattered warnings.
 | Auto-fix unused usings | - | ✅ Opt-in |
 | On-the-fly HTML report | – | ✅ |
 | Runs entirely on your own runner | ✅ | ✅ (no dashboard, no telemetry) |
-| License required | No | Yes ([Lemon Squeezy](Payments, Tax & Subscriptions for SaaS)) |
+| License required | No | Yes ([Lemon Squeezy](https://lemonsqueezy.com)) |
  
 ## Usage
  
@@ -115,7 +115,7 @@ exclude:                      # findings in matching files are ignored
 **Protect this file.** On pull requests the config is read from the PR's own
 branch, so a PR can change it — the same is true of a baseline file. Both
 show up in the diff, but if you rely on them as policy, require review for
-them with a [`CODEOWNERS`](About code owners - GitHub Docs)
+them with a [`CODEOWNERS`](https://docs.github.com/repositories/.../about-code-owners)
 entry:
  
 ```
@@ -131,7 +131,7 @@ entry:
           license-key: ${{ secrets.RELGATE_LICENSE_KEY }}
 ```
  
-Requires a [Lemon Squeezy](Payments, Tax & Subscriptions for SaaS) license key, passed in
+Requires a [Lemon Squeezy](https://lemonsqueezy.com) license key, passed in
 via a repo secret. Everything Pro computes runs locally on your own runner —
 there's no dashboard, no telemetry, and no persisted history. The license
 check itself fails open: if Lemon Squeezy is unreachable, your pipeline
@@ -195,7 +195,7 @@ can't elevate their own permissions.
  
 - Only top-level package vulnerabilities are fixed. Purely transitive
   vulnerabilities are reported but not auto-fixed.
-- [Central Package Management](Central Package Management | Microsoft Learn)
+- [Central Package Management](https://learn.microsoft.com/nuget/consume-packages/central-package-management)
   is supported: the `PackageVersion` entry in `Directory.Packages.props`
   is updated (not the project file). Only entries pinned at the exact
   vulnerable version are rewritten, so a per-framework conditional entry on
