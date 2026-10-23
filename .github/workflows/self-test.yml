@@ -20,8 +20,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.x'
       - run: pip install yamllint actionlint-py shellcheck-py
@@ -65,7 +65,7 @@ jobs:
           - fixture: test-fixtures/broken/Broken.csproj
             assert: assert-broken-build.sh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: relgate
         uses: ./
         with:
@@ -88,7 +88,7 @@ jobs:
   usings-check-without-editorconfig:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Remove this repo's own .editorconfig for this job only
         run: mv .editorconfig /tmp/editorconfig-backup
       - id: relgate
@@ -115,7 +115,7 @@ jobs:
   config-advisory-severity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: relgate
         uses: ./
         with:
@@ -133,7 +133,7 @@ jobs:
   config-excludes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: relgate
         uses: ./
         with:
@@ -152,7 +152,7 @@ jobs:
   config-invalid:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run RelGate with an invalid config, expecting failure
         id: relgate
         continue-on-error: true
@@ -172,7 +172,7 @@ jobs:
   fail-on-issues-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run RelGate expecting it to fail
         id: relgate
         continue-on-error: true
@@ -191,7 +191,7 @@ jobs:
   pro-licensed:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start mock Lemon Squeezy server
         run: bash .github/scripts/self-test/start-mock-license-server.sh
       - id: relgate
@@ -227,7 +227,7 @@ jobs:
       matrix:
         license-key: [nonsense, valid-wrong-product]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start mock Lemon Squeezy server
         run: bash .github/scripts/self-test/start-mock-license-server.sh
       - id: relgate
@@ -246,7 +246,7 @@ jobs:
   pro-api-unreachable:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: relgate
         uses: ./pro
         with:

@@ -15,7 +15,7 @@ jobs:
   comment-is-posted-once:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
  
       # Run twice on purpose: the second run must update the first run's
       # comment, not add another one.
@@ -35,7 +35,7 @@ jobs:
         # step above must still have passed (non-fatal fallback), but
         # there's no comment to count.
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const comments = await github.paginate(
